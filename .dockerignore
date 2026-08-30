@@ -1,0 +1,48 @@
+# Git & Docker
+.git
+.gitignore
+.dockerignore
+Dockerfile*
+docker-compose*
+
+# Python Environments & Cache
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Data & Large Files (علشان الداتا ما تترفعش جوه الـ Context)
+*.csv
+*.parquet
+*.h5
+*.pkl
+*.onnx
+*.pt
+*.pth
+data/
+datasets/
+models/
+
+# Logs & Temp files
+*.log
+.DS_Store
+.vscode/
+.idea/
+
+
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.git/
+.gitignore
+data/
+reports/
+.pytest_cache/
