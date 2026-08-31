@@ -5,21 +5,23 @@ import pandas as pd
 from datetime import datetime, timedelta
 from sqlalchemy import create_engine
 import requests
-
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-
 # استيراد Evidently Monitor من المشروع
 from src.api.monitoring import drift_monitor
-# استيراد بايبلاين التدريب بالمسار الصحيح
 from src.pipelines.training_pipeline import TrainingPipeline
 
 # إعداد الـ Logger الخاص بالـ DAG
 logger = logging.getLogger("airflow.task")
 
 # قراءة إعدادات الـ Telegram من الـ Environment Variables بأمان
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8975706912:AAEEd5uuRqUQrlGbXd79dAIqgWgBLCrp5XY")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "7016869848")
+# قراءة إعدادات الـ Telegram بأمان تام بدون حرقها في الكود
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+
+# (اختياري ولكن مستحسن) نتأكد إنهم موجودين فعلاً وإلا نوقف الكود
+if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+    raise ValueError("❌ Telegram credentials are missing from environment variables!")
 
 def send_telegram_alert(message: str):
     """دالة لإرسال التنبيهات على تليجرام باستخدام متغيرات البيئة"""
