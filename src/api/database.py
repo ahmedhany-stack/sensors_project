@@ -8,17 +8,17 @@ from sqlalchemy.orm import sessionmaker
 # تحميل المتغيرات من ملف .env
 load_dotenv()
 
-# قراءة رابط قاعدة البيانات من البيئة
-DATABASE_URL = os.getenv("DATABASE_URL")
+# قراءة المتغيرات مباشرة لضمان عدم حدوث أي خطأ في الباسورد أو الاتصال
+db_user = os.getenv("DB_USER", "airflow")
+db_password = os.getenv("DB_PASSWORD", "airflow")
+db_host = os.getenv("DB_HOST", "127.0.0.1")
+db_port = os.getenv("DB_PORT", "5433")
+db_name = os.getenv("DB_NAME", "airflow")
 
-# في حالة عدم وجود المتغير لأي سبب، نقوم بتشكيله من المتغيرات المنفصلة
-if not DATABASE_URL:
-    db_user = os.getenv("DB_USER", "postgres")
-    db_password = os.getenv("DB_PASSWORD", "")
-    db_host = os.getenv("DB_HOST", "localhost")
-    db_port = os.getenv("DB_PORT", "5432")
-    db_name = os.getenv("DB_NAME", "rul_db")
-    DATABASE_URL = f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+# بناء الرابط بشكل مباشر ومضمون متخطياً أي قيمة قديمة في الـ .env
+DATABASE_URL = f"postgresql+psycopg2://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
+
+print(f"--> Connecting to Database URL: {DATABASE_URL}")
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

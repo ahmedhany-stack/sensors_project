@@ -34,3 +34,5 @@ psutil>=5.9.0
 
 # --- Database Drivers ---
 psycopg2-binary>=2.9.0
+
+streamlit

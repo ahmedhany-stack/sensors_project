@@ -1,137 +1,150 @@
-🛠️ Tech Stack & Advanced Components
+🚀 Enterprise-Grade RUL Prediction & MLOps Automated Pipeline
 
-    Core Language: Python, Pandas, NumPy, Scikit-Learn
+    A production-ready, end-to-end MLOps pipeline designed for Remaining Useful Life (RUL) prediction of industrial engines (CMAPSS dataset). Built to handle real-time inference, automated data drift detection, dynamic model retraining, and live alerting.
 
-    Machine Learning: XGBoost Regressor
-
-    MLflow & Experiment Tracking: Parameter logging, metrics registry, and model artifact management
-
-    Workflow Orchestration: Apache Airflow (Automated Pipelines, DAGs, and task scheduling)
-
-    Drift Detection & Monitoring: Evidently AI & Prometheus Metrics
-
-    Alerting System: Discord Webhooks & Telegram Bot integration for real-time notifications
-
-    API Framework: FastAPI, Pydantic v2, and SQLAlchemy ORM
-
-    Database Layer: PostgreSQL 13 (Centralized prediction logging and metrics storage)
-
-    Containerization: Docker & Docker Compose
-
-    Testing & Quality Assurance: Pytest (100% Unit & Integration Test Coverage)
-
-📁 Project Structure
+🏗️ System Architecture & Workflow
 Plaintext
 
-sensors_project/
-├── .github/workflows/       # CI/CD GitHub Actions
-├── airflow/dags/            # Airflow DAGs for automated retraining pipelines
-├── data/                    # Raw, Processed, and Feature datasets
-├── models/                  # Saved models, Scalers, and Metrics (JSON)
-├── src/
-│   ├── api/                 # FastAPI application and prediction endpoints
-│   ├── components/          # Data Validation, Transformation, Training, Evaluation
-│   ├── monitoring/          # Evidently AI drift detection scripts
-│   └── utils/               # Custom logger, exception handlers, and webhook routers
-├── tests/
-│   ├── unit/                # Unit tests for data processing and models (Pytest)
-│   └── integration/         # API endpoint integration tests
-├── Dockerfile               # Production container config
-├── docker-compose.yaml      # Multi-container orchestration (Airflow + PostgreSQL)
-├── requirements.txt         # Project dependencies
-└── pyproject.toml           # Pytest and project configuration
+[ Industrial Engines / Sensors ] 
+             │
+             ▼ (REST API - POST)
+     [ FastAPI Service ] ──> Logs Predictions ──> [ PostgreSQL (`rul_db`) ]
+             │                                          │
+             │ (Async Log Capture)                      │ (Data Window: Last 24 Hours)
+             ▼                                          ▼
+   [ Streamlit Dashboard ] <───────────────── [ Apache Airflow Orchestration ]
+     (Live RUL, Alerts & Metrics)                       │
+                                                        ▼
+                                           [ Evidently AI Drift Analysis ]
+                                                        │
+                                          ┌─────────────┴─────────────┐
+                                          ▼ (Drift Detected: True)    ▼ (No Drift)
+                               [ Automated Retraining ]       [ Pipeline Success ]
+                                          │
+                                          ▼
+                               [ Telegram Alert Notification ]
 
-🛡️ Engineering Challenges, Troubleshooting & Real-World Solutions
+🛠️ Tech Stack & Ecosystem
 
-Building a production-grade, multi-service MLOps system involves bridging local environments with containerized orchestrators. During the development and integration of this pipeline, several core architectural bottlenecks and system-level challenges were encountered and successfully resolved:
-1. Python Environment & Dependency Resolution (ModuleNotFoundError)
+    Core & Pipeline: Python, Pandas, Scikit-XGBoost / ML Models.
 
-    The Challenge: When initializing the FastAPI application or running components locally, Python threw ModuleNotFoundError and Could not import module exceptions due to incorrect sys.path resolution and relative package importing structures.
+    API & Serving: FastAPI, Uvicorn, Pydantic.
 
-    The Solution: Standardized package execution by prefixing runtime commands with Python's module runner (python -m uvicorn src.api.app:app) and properly setting environment variables ($env:PYTHONPATH=".") to ensure absolute root-level module visibility across all local execution contexts.
+    Database & Storage: PostgreSQL (rul_db), DVC (Data Version Control).
 
-2. Database Provisioning in Isolated Containers (Undefined Database rul_db)
+    Orchestration & Automation: Apache Airflow (DAGs, TaskFlow API).
 
-    The Challenge: Airflow and the ML prediction logger required a centralized relational database (rul_db), which did not exist by default inside the initialized PostgreSQL 13 Docker container (sensors_project-postgres-1), causing connection refusal errors.
+    Monitoring & Observability: Evidently AI (Data Drift Detection), Prometheus, Grafana.
 
-    The Solution: Intervened directly at the container level using docker exec with the PostgreSQL interactive terminal to provision the target database programmatically:
-    Bash
+    Frontend / Dashboard: Streamlit (Real-time monitoring, alerts, and RUL degradation curves).
 
-    docker exec -it sensors_project-postgres-1 psql -U airflow -d airflow -c "CREATE DATABASE rul_db;"
+    Alerting System: Telegram Bot API (Automated critical failure and retraining alerts).
 
-3. Cross-Service Table Synchronization (UndefinedTable: prediction_logs)
+    Testing & Quality Assurance: Pytest (Unit tests for data processing/models + Integration tests for API).
 
-    The Challenge: Even after database creation, Airflow DAGs executing drift analysis failed with psycopg2.errors.UndefinedTable because the prediction_logs table had not yet been materialized inside the container's rul_db instance.
+    Containerization: Docker, Docker Compose, WSL2.
 
-    The Solution: Harmonized connection strings and unified user credentials (airflow:airflow) across both local .env configurations and Docker environment variables. We then explicitly executed table initialization scripts inside the container:
-    Bash
+📂 Project Directory Structure
+Plaintext
 
-    docker exec -it sensors_project-postgres-1 psql -U airflow -d rul_db -c "CREATE TABLE IF NOT EXISTS prediction_logs (id SERIAL PRIMARY KEY, features JSONB, prediction FLOAT, created_at TIMESTAMP DEFAULT NOW());"
+.
+├── airflow/                    # Airflow DAGs and orchestration scripts
+│   └── dags/
+│       └── rul_data_drift_dag.py
+├── api/                        # FastAPI application and routing
+│   ├── main.py
+│   └── schemas.py
+├── data/                       # Datasets (Raw, Processed, and DVC tracked)
+│   ├── raw/
+│   └── processed/
+├── monitoring/                 # Evidently AI configuration and drift detectors
+│   └── monitoring.py
+├── reports/                    # Generated JSON/HTML drift reports
+│   └── drift_report.json
+├── src/                        # Core machine learning pipelines & feature engineering
+│   ├── model.py
+│   └── preprocessing.py
+├── streamlit_app/              # Real-time monitoring UI dashboard
+│   └── app.py
+├── tests/                      # Comprehensive test suite
+│   ├── integration/
+│   │   └── test_api.py
+│   └── unit/
+│       ├── test_data.py
+│       └── test_model.py
+├── docker-compose.yml          # Full stack containerization
+├── Dockerfile
+├── requirements.txt
+└── README.md
 
-4. Bridging Local API Endpoints with Containerized Orchestration
+🧠 Core Features & MLOps Highlights
 
-    The Challenge: A fundamental architectural hurdle arose when the FastAPI inference service ran locally (localhost:8000) while Apache Airflow executed inside isolated Docker containers (sensors_project-airflow-scheduler-1), causing disparity in data ingestion streams and log consumption layers.
+    Real-Time Inference API (FastAPI):
 
-    The Solution: Configured mapped Docker volume mounts (volumes: - .:/opt/airflow) and exposed container port 5432 to the host machine. This allowed local prediction requests sent to FastAPI to write directly into the shared Docker PostgreSQL volume, making logs instantly accessible to Airflow monitoring DAGs for seamless Evidently AI drift evaluation.
+        Receives multi-sensor time-series engine readings.
 
-🔄 Automated Retraining & Drift Monitoring (The Core Magic)
+        Computes RUL instantly and logs every request asynchronously into PostgreSQL.
 
-    Drift Detection: Evidently AI continuously compares incoming production prediction logs stored in PostgreSQL against the baseline training dataset reference features.
+    Automated Continuous Monitoring (Apache Airflow + Evidently AI):
 
-    Alerting: If feature distributions or performance metrics drift beyond acceptable thresholds, critical visual alerts and reports are instantly dispatched via Discord Webhooks and Telegram Bots.
+        Configured DAGs inspect production prediction logs (e.g., sliding window of the last 24 hours).
 
-    Orchestration: Apache Airflow captures the trigger, initiates the automated retraining DAG, executes data processing steps, fits a fresh XGBoost model, logs all parameters and metrics to MLflow, and seamlessly registers the production model.
+        Automatically benchmarks live data against the static reference dataset (train.csv).
 
-🧪 Testing & Quality Assurance
+        Evaluates feature distribution shifts and dataset-level drift flags.
 
-The system maintains industrial reliability through an extensive automated testing suite:
+    Closed-Loop Continuous Training (CT):
+
+        If dataset_drift = True is detected, Airflow dynamically triggers the automated training pipeline to ingest fresh data and update the model weights.
+
+    Instant Telemetry & Alerting (Telegram):
+
+        Automatically dispatches real-time Telegram alerts upon detecting critical drift metrics or successful model retraining completions.
+
+    Operational Intelligence Dashboard (Streamlit):
+
+        Displays engine status, active alerts, RUL degradation curves over time, and live data health metrics in a single interface.
+
+    Robust Testing Suite (Pytest):
+
+        Fully covered with unit tests for data preprocessing and model inference, alongside integration tests for the REST API endpoints.
+
+🚀 Getting Started & Installation
+1. Clone the Repository
 Bash
 
-# Set Python path and run pytest suite
-$env:PYTHONPATH="."
-pytest -v
+git clone https://github.com/ahmedhany-stack/sensors_project
+cd rul-mlops-pipeline
 
-    Status: All Unit & Integration tests are passing successfully (100% PASSED).
+2. Environment Variables
 
-🚀 Getting Started Locally
+Create a .env file in the root directory based on .env.example:
+مقتطف الرمز
 
-    Clone the repository:
-    Bash
+POSTGRES_USER=your_user
+POSTGRES_PASSWORD=your_password
+POSTGRES_DB=rul_db
+TELEGRAM_BOT_TOKEN=your_telegram_token
+TELEGRAM_CHAT_ID=your_chat_id
 
-    git clone https://github.com/ahmedhany-stack/sensors_project
-    cd sensors_project
+3. Run with Docker Compose
 
-    Create and activate a virtual environment:
-    Bash
-
-    python -m venv .venv
-    .venv\\Scripts\\Activate  # On Windows PowerShell
-
-    Install dependencies:
-    Bash
-
-    pip install -r requirements.txt
-
-    Run the FastAPI server:
-    Bash
-
-    python -m uvicorn src.api.app:app --reload
-
-🐳 Docker Deployment
-
-To build and run the orchestration services via Docker Compose:
+Bring up the entire stack (API, PostgreSQL, Airflow, and Streamlit) with a single command:
 Bash
 
-docker compose up -d --build
+docker-compose up --build
 
-🎯 Author
+4. Run Tests
 
-Ahmed Hany Sallam
+Verify the integrity of the system using pytest:
+Bash
 
-Aspiring Machine Learning & MLOps Engineer
-"""
+pytest tests/
 
-with open("README.md", "w", encoding="utf-8") as f:
-f.write(readme_content)
-print("README.md generated successfully!")
+📊 Dashboard Preview & Monitoring Loop
 
+    FastAPI Docs: http://localhost:8000/docs
+
+    Streamlit UI: http://localhost:8501
+
+    Airflow Webserver: http://localhost:8080
