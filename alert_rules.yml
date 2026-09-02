@@ -2,10 +2,10 @@ groups:
   - name: rul_api_alerts
     rules:
       - alert: HighPredictionLatency
-        expr: up == 1
+        expr: rate(model_prediction_latency_seconds_sum[1m]) > 1.0
         for: 0s
         labels:
           severity: warning
         annotations:
-          summary: "API Monitoring Active & Triggered!"
-          description: "Prometheus successfully generated a test alert."
+          summary: "High Prediction Latency Detected!"
+          description: "API prediction latency is exceeding 1 second."

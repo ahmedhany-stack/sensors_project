@@ -105,8 +105,6 @@ async def predict_rul(payload: BatchPredictionInput, background_tasks: Backgroun
 
     try:
         # حيلة للتست: لو أرسلنا unit_number = 999 خليه ينام 1.5 ثانية
-        if any(record.unit_number == 999 for record in payload.records):
-            await asyncio.sleep(1.5)
 
         input_data = [record.dict() for record in payload.records]
         df = pd.DataFrame(input_data)

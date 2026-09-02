@@ -43,41 +43,40 @@ class PredictionPipeline:
             raise CustomException(e, sys)
 
     def _preprocess_input_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        """تطبيق Feature Engineering بنفس خطوات التدريب وتطبيق الـ Scaler المحفوظ"""
-        try:
-            df = df.copy()
+            """تطبيق نفس خطوات Feature Engineering والـ Scaler تماماً كما حدث في التدريب"""
+            try:
+                df = df.copy()
 
-            # 1. استبعاد الأعمدة الثابتة
-            constant_cols = ['setting_3', 's_1', 's_5', 's_10', 's_16', 's_18', 's_19']
-            df.drop(columns=[c for c in constant_cols if c in df.columns], inplace=True)
+                # 1. نفس قائمة الأعمدة الثابتة التي تم حذفها أثناء التدريب
+                constant_cols = ['setting_3', 's_1', 's_5', 's_10', 's_16', 's_18', 's_19']
+                df.drop(columns=[c for c in constant_cols if c in df.columns], inplace=True)
 
-            # 2. حساب الـ Rolling والـ Lag Features متجزئة بحسب unit_number
-            sensor_cols = [c for c in df.columns if c.startswith('s_') or c.startswith('setting_')]
-            
-            for col in sensor_cols:
-                df[f'{col}_roll_mean'] = df.groupby('unit_number')[col].transform(lambda x: x.rolling(10, min_periods=1).mean())
-                df[f'{col}_roll_std'] = df.groupby('unit_number')[col].transform(lambda x: x.rolling(10, min_periods=1).std()).fillna(0)
-                df[f'{col}_lag_1'] = df.groupby('unit_number')[col].shift(1)
-                df[f'{col}_lag_1'] = df.groupby('unit_number')[f'{col}_lag_1'].bfill()
+                # 2. استخراج الحساسات وتطبيق الـ Rolling والـ Lag تماماً مثل DataTransformation
+                sensor_cols = [c for c in df.columns if c.startswith('s_') or c.startswith('setting_')]
+                
+                for col in sensor_cols:
+                    df[f'{col}_roll_mean'] = df.groupby('unit_number')[col].transform(lambda x: x.rolling(10, min_periods=1).mean())
+                    df[f'{col}_roll_std'] = df.groupby('unit_number')[col].transform(lambda x: x.rolling(10, min_periods=1).std()).fillna(0)
+                    df[f'{col}_lag_1'] = df.groupby('unit_number')[col].shift(1)
+                    df[f'{col}_lag_1'] = df.groupby('unit_number')[f'{col}_lag_1'].bfill()
 
-            # 3. التأكد من وجود كل الأعمدة المطلوبة بالترتيب الصحيح
-            missing_cols = set(self.feature_names) - set(df.columns)
-            if missing_cols:
-                raise ValueError(f"Missing required feature columns in input data: {missing_cols}")
+                # 3. التأكد من تطابق الأعمدة مع الـ features.json المسجل
+                missing_cols = set(self.feature_names) - set(df.columns)
+                if missing_cols:
+                    raise ValueError(f"Missing required feature columns in input data: {missing_cols}")
 
-            # ترتيب الأعمدة بنفس ترتيب وقت التدريب
-            X_df = df[self.feature_names].copy()
+                # ترتيب الأعمدة بنفس الترتيب تماماً وقت التدريب
+                X_df = df[self.feature_names].copy()
 
-            # 4. تطبيق الـ Transform باستخدام الـ Scaler المحفوظ فقط
-            X_scaled = self.scaler.transform(X_df)
-            X_scaled_df = pd.DataFrame(X_scaled, columns=self.feature_names)
+                # 4. تطبيق الـ Scaler المحفوظ فقط (Transform بدون Fit)
+                X_scaled = self.scaler.transform(X_df)
+                X_scaled_df = pd.DataFrame(X_scaled, columns=self.feature_names)
 
-            return X_scaled_df
+                return X_scaled_df
 
-        except Exception as e:
-            logger.error("Error during input data preprocessing in PredictionPipeline.")
-            raise CustomException(e, sys)
-
+            except Exception as e:
+                logger.error("Error during input data preprocessing in PredictionPipeline.")
+                raise CustomException(e, sys)
     def predict(self, input_df: pd.DataFrame) -> np.ndarray:
         """تشغيل التوقع لبيانات مدخلة كـ DataFrame"""
         try:

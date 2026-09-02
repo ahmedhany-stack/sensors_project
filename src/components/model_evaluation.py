@@ -18,14 +18,24 @@ class ModelEvaluation:
     def __init__(self):
         self.evaluation_config = ModelEvaluationConfig()
 
-    def initiate_model_evaluation(self, model_path: str, transformed_train_path: str):
-        logger.info("Starting Model Evaluation with MLflow tracking...")
+    def initiate_model_evaluation(self, model_path: str, evaluation_data_path: str):
+        """
+        تقييم أداء الموديل وحساب الـ Metrics (RMSE, MAE, R2) وتسجيلها في MLflow
+        """
+        logger.info("Starting Model Evaluation process with MLflow tracking...")
         try:
-            model = joblib.load(model_path)
-            train_df = pd.read_csv(transformed_train_path)
+            if not os.path.exists(model_path):
+                raise FileNotFoundError(f"Trained model not found at: {model_path}")
+            if not os.path.exists(evaluation_data_path):
+                raise FileNotFoundError(f"Evaluation dataset not found at: {evaluation_data_path}")
 
-            X = train_df.drop(columns=['unit_number', 'time_in_cycles', 'RUL'])
-            y = train_df['RUL']
+            model = joblib.load(model_path)
+            eval_df = pd.read_csv(evaluation_data_path)
+            
+            logger.info(f"Loaded evaluation dataset with shape: {eval_df.shape}")
+
+            X = eval_df.drop(columns=['unit_number', 'time_in_cycles', 'RUL'], errors='ignore')
+            y = eval_df['RUL']
 
             predictions = model.predict(X)
 
@@ -39,14 +49,14 @@ class ModelEvaluation:
                 "R2_Score": float(r2)
             }
 
-            logger.info(f"Evaluation Metrics: RMSE={rmse:.4f}, MAE={mae:.4f}, R2={r2:.4f}")
+            logger.info(f"Evaluation Metrics -> RMSE: {rmse:.4f} | MAE: {mae:.4f} | R2: {r2:.4f}")
 
             # حفظ الـ Metrics محلياً في JSON
             os.makedirs(os.path.dirname(self.evaluation_config.metrics_file_path), exist_ok=True)
             with open(self.evaluation_config.metrics_file_path, "w") as f:
                 json.dump(metrics, f, indent=4)
 
-            # تسجيل الـ Metrics في MLflow (ضمن الـ active run الحالية إن وجدت، أو فتح run جديدة)
+            # تسجيل الـ Metrics في MLflow
             if mlflow.active_run() is None:
                 mlflow.start_run(run_name="Model_Evaluation", nested=True)
             
@@ -57,5 +67,5 @@ class ModelEvaluation:
             return metrics
 
         except Exception as e:
-            logger.error("Error during Model Evaluation.")
+            logger.error("Error occurred during Model Evaluation.")
             raise CustomException(e, sys)

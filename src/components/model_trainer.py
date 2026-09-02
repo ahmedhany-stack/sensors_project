@@ -20,12 +20,16 @@ class ModelTrainer:
     def initiate_model_trainer(self, transformed_train_path: str):
         logger.info("Starting Model Training with MLflow tracking...")
         try:
+            if not os.path.exists(transformed_train_path):
+                raise FileNotFoundError(f"Transformed training data not found at: {transformed_train_path}")
+
             train_df = pd.read_csv(transformed_train_path)
+            logger.info(f"Loaded transformed training data with shape: {train_df.shape}")
 
             X_train = train_df.drop(columns=['unit_number', 'time_in_cycles', 'RUL'])
             y_train = train_df['RUL']
 
-            # ضبط إعدادات الموديل
+            # Hyperparameters
             n_estimators = 100
             learning_rate = 0.05
             max_depth = 5
@@ -33,7 +37,7 @@ class ModelTrainer:
 
             # تفعيل الـ MLflow tracking run
             with mlflow.start_run(run_name="XGBoost_RUL_Training"):
-                # تسجيل الـ Parameters
+                # تسجيل الـ Parameters في MLflow
                 mlflow.log_param("n_estimators", n_estimators)
                 mlflow.log_param("learning_rate", learning_rate)
                 mlflow.log_param("max_depth", max_depth)
@@ -56,9 +60,9 @@ class ModelTrainer:
                 # تسجيل الموديل في MLflow
                 mlflow.xgboost.log_model(model, "model")
 
-                logger.info(f"Model saved successfully at: {self.model_trainer_config.trained_model_file_path}")
+                logger.info(f"Model trained and saved successfully at: {self.model_trainer_config.trained_model_file_path}")
                 return self.model_trainer_config.trained_model_file_path
 
         except Exception as e:
-            logger.error("Error during Model Training.")
+            logger.error("Error occurred during Model Training.")
             raise CustomException(e, sys)

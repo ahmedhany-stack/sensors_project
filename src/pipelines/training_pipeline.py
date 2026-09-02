@@ -35,7 +35,6 @@ class TrainingPipeline:
             # Step 3: Data Transformation
             logger.info(">>> Stage 3: Data Transformation Started <<<")
             transformation = DataTransformation()
-            # 🎯 التعديل هنا: استقبال الـ 3 مسارات
             transformed_train_path, transformed_test_path, scaler_path = transformation.initiate_data_transformation(train_path, test_path)
             logger.info(f"Transformation Finished. Transformed Train Path: {transformed_train_path}, Transformed Test Path: {transformed_test_path}")
 
@@ -45,10 +44,9 @@ class TrainingPipeline:
             model_path = trainer.initiate_model_trainer(transformed_train_path)
             logger.info(f"Model Training Finished. Saved Model Path: {model_path}")
 
-            # Step 5: Model Evaluation
+            # Step 5: Model Evaluation (تقييم الموديل على بيانات الـ Test المعالجة)
             logger.info(">>> Stage 5: Model Evaluation Started <<<")
             evaluation = ModelEvaluation()
-            # 🎯 يمرر transformed_test_path لـ evaluation للتأكد من أداء الموديل على بيانات الاختبار
             metrics = evaluation.initiate_model_evaluation(model_path, transformed_test_path)
             logger.info(f"Model Evaluation Finished. Final Metrics: {metrics}")
 

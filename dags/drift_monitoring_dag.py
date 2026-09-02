@@ -1,4 +1,16 @@
 import os
+import sys
+
+# ⚡ الحل الجذري والوحيد المضمون لأيرفلو: إضافة جذر المشروع مباشرة للـ sys.path
+AIRFLOW_ROOT = "/opt/airflow"
+if AIRFLOW_ROOT not in sys.path:
+    sys.path.insert(0, AIRFLOW_ROOT)
+
+# التأكد برضه من مسار الـ dags أو مجلد المشروع الحالي لو بتشغله محلياً
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../"))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 import logging
 import json
 import pandas as pd
@@ -7,19 +19,19 @@ from sqlalchemy import create_engine
 import requests
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-# استيراد Evidently Monitor من المشروع
+
+# دلوقتي استورد براحتك من غير ما تشيل هم الـ ModuleNotFoundError نهائياً
 from src.api.monitoring import drift_monitor
 from src.pipelines.training_pipeline import TrainingPipeline
 
 # إعداد الـ Logger الخاص بالـ DAG
 logger = logging.getLogger("airflow.task")
 
-# قراءة إعدادات الـ Telegram من الـ Environment Variables بأمان
 # قراءة إعدادات الـ Telegram بأمان تام بدون حرقها في الكود
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# (اختياري ولكن مستحسن) نتأكد إنهم موجودين فعلاً وإلا نوقف الكود
+# نتأكد إنهم موجودين فعلاً وإلا نوقف الكود
 if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
     raise ValueError("❌ Telegram credentials are missing from environment variables!")
 
@@ -59,8 +71,11 @@ def generate_and_check_drift():
     """دالة لسحب البيانات، فحص الـ Drift، وإعادة التدريب تلقائياً مع إرسال تنبيهات تليجرام"""
     logger.info("Starting Evidently Data Drift Monitoring & CT Task...")
     
-    db_url = "postgresql://postgres:Ataazee66@postgres:5432/rul_db"
-    
+    # ⚡ تم توجيه الرابط لقاعدة بيانات المشروع rul_db حيث يتواجد جدول prediction_logs فعلاً
+    # (عدل اليوزر والباسورد لـ airflow:airflow لو دي البيانات اللي واخدها الـ container عندك)
+    # استخدم بيانات الدخول الخاصة بـ docker-compose (يوزر والباسورد: airflow) ومع قاعدة بيانات rul_db
+# استخدم بيانات الدخول الخاصة بـ docker-compose (يوزر والباسورد: airflow) ومع قاعدة بيانات rul_db
+    db_url = "postgresql+psycopg2://airflow:airflow@postgres:5432/rul_db"    
     try:
         logger.info("Connecting to PostgreSQL database to fetch prediction logs...")
         engine = create_engine(db_url)
@@ -96,14 +111,26 @@ def generate_and_check_drift():
         logger.info("Running Evidently drift analysis pipeline...")
         drift_monitor.run_drift_analysis(current_data=current_df)
         
-        # 2. قراءة تقرير الـ JSON الناتج لمعرفة هل حدث Drift أم لا
+        # 2. قراءة تقرير الـ JSON الناتج لمعرفة هل حدث Drift أم لا بشكل آمن
         json_report_path = os.path.join("reports", "drift_report.json")
         drift_detected = False
         
         if os.path.exists(json_report_path):
             with open(json_report_path, "r") as f:
                 report_data = json.load(f)
-                drift_detected = report_data.get("metrics", [{}])[0].get("result", {}).get("dataset_drift", False)
+                
+            # محاولة قراءة الـ Dataset Drift بطريقة آمنة ومتوافقة
+            try:
+                metrics = report_data.get("metrics", [])
+                for metric in metrics:
+                    if "DatasetDriftMetric" in metric.get("metric", ""):
+                        drift_detected = metric.get("result", {}).get("dataset_drift", False)
+                        break
+                if not drift_detected and metrics:
+                    drift_detected = metrics[0].get("result", {}).get("dataset_drift", False)
+            except Exception as parse_err:
+                logger.error(f"Error parsing drift JSON metrics structure: {parse_err}")
+                drift_detected = False
         else:
             logger.warning("Drift JSON report path not found. Skipping automated trigger check.")
 
@@ -113,8 +140,9 @@ def generate_and_check_drift():
         if drift_detected:
             logger.warning("🚨 Data Drift detected! Triggering automated model retraining pipeline...")
             
-            # استدعاء دالة بايبلاين التدريب
-            TrainingPipeline.run_pipeline()
+            # استدعاء بايبلاين التدريب بشكل صحيح عبر Instance
+            trainer_pipeline = TrainingPipeline()
+            trainer_pipeline.run_pipeline()
             
             logger.info("Model retraining pipeline completed successfully after detecting drift!")
             

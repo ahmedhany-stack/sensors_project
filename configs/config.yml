@@ -1,0 +1,44 @@
+database:
+  db_name: "rul_db"
+  db_port: "5432"
+  historical_train_table: "historical_training_data"
+  historical_test_table: "historical_test_data"
+  prediction_logs_table: "prediction_logs"
+
+data_ingestion:
+  raw_train_path: "data/raw/train_FD001.txt"
+  raw_test_path: "data/raw/test_FD001.txt"
+  ingested_train_path: "data/processed/train.csv"
+  ingested_test_path: "data/processed/test.csv"
+
+data_validation:
+  status_file_path: "data/processed/data_validation_status.txt"
+
+data_transformation:
+  transformed_train_path: "data/features/transformed_train.csv"
+  transformed_test_path: "data/features/transformed_test.csv"
+  scaler_path: "models/scaler.joblib"
+  features_path: "models/features.json"
+  clip_rul_upper: 125
+  constant_cols:
+    - "setting_3"
+    - "s_1"
+    - "s_5"
+    - "s_10"
+    - "s_16"
+    - "s_18"
+    - "s_19"
+
+model_trainer:
+  trained_model_file_path: "models/xgb_rul_model.joblib"
+  params:
+    n_estimators: 100
+    learning_rate: 0.05
+    max_depth: 5
+    random_state: 42
+
+model_evaluation:
+  metrics_file_path: "models/metrics.json"
+
+mlflow:
+  experiment_name: "RUL_Prediction_MLOps"
