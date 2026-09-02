@@ -98,7 +98,7 @@ pytest -v
     Clone the repository:
     Bash
 
-    git clone [https://github.com/your-username/sensors_project.git](https://github.com/your-username/sensors_project.git)
+    git clone https://github.com/ahmedhany-stack/sensors_project
     cd sensors_project
 
     Create and activate a virtual environment:
