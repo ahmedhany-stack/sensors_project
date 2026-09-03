@@ -20,6 +20,9 @@ class ModelTrainer:
     def initiate_model_trainer(self, transformed_train_path: str):
         logger.info("Starting Model Training with MLflow tracking...")
         try:
+
+            mlflow.set_tracking_uri("http://127.0.0.1:5000")
+            mlflow.set_experiment("RUL_Prediction")
             if not os.path.exists(transformed_train_path):
                 raise FileNotFoundError(f"Transformed training data not found at: {transformed_train_path}")
 

@@ -2,7 +2,7 @@ groups:
   - name: rul_api_alerts
     rules:
       - alert: HighPredictionLatency
-        expr: rate(model_prediction_latency_seconds_sum[1m]) > 1.0
+        expr: model_prediction_latency_seconds_sum > 1.0
         for: 0s
         labels:
           severity: warning
