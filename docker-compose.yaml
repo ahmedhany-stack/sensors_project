@@ -8,11 +8,13 @@ x-airflow-common:
     AIRFLOW__CORE__LOAD_EXAMPLES: 'False'
     PYTHONPATH: "/opt/airflow"
     _PIP_ADDITIONAL_REQUIREMENTS: ""
-    # حط التوكن والتشات آي دي هنا عشان تتأكد إنهم متشافين جوا الحاويات
     TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN}"
     TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID}"
     DB_HOST: "postgres"
     DB_PORT: "5432"
+    # إضافة متغيرات بيئة Redis لتستخدمها داخل الـ DAGs أو الموديل بسهولة
+    REDIS_HOST: "redis"
+    REDIS_PORT: "6379"
     MLFLOW_TRACKING_URI: "http://host.docker.internal:5000"
   volumes:
     - ./dags:/opt/airflow/dags
@@ -27,6 +29,8 @@ x-airflow-common:
     &airflow-common-depends-on
     postgres:
       condition: service_healthy
+    redis:
+      condition: service_healthy
 
 services:
   postgres:
@@ -39,7 +43,7 @@ services:
       POSTGRES_DB: airflow
       POSTGRES_HOST_AUTH_METHOD: "trust"
     volumes:
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql  # السطر السحري لتكويت rul_db أوتوماتيك
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
     logging:
       options:
         max-size: 10m
@@ -47,6 +51,22 @@ services:
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "airflow"]
       interval: 10s
+      retries: 5
+      start_period: 5s
+    restart: always
+
+  # -------------------------------------------------------------
+  # إضافة خدمة Redis المجانية كـ Cache Store مستقل
+  # -------------------------------------------------------------
+  redis:
+    image: redis:alpine
+    container_name: redis_cache
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
       retries: 5
       start_period: 5s
     restart: always

@@ -77,3 +77,29 @@ class HealthCheckResponse(BaseModel):
     status: str = Field(..., example="healthy")
     model_loaded: bool = Field(..., example=True)
     version: str = Field(..., example="1.0.0")
+
+
+
+# --- الـ Schemas القديمة الخاصة بك كما هي ---
+# BatchPredictionInput, PredictionResponse, SinglePredictionOutput, HealthCheckResponse...
+
+# --- Schemas جديدة للـ Authentication والـ Authorization ---
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+
+class TokenData(BaseModel):
+    username: Optional[str] = None
+    role: Optional[str] = None
+
+
+class UserLogin(BaseModel):
+    username: str
+    password: str
+
+
+class User(BaseModel):
+    username: str
+    role: str
+    disabled: Optional[bool] = False

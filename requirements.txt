@@ -36,3 +36,20 @@ psutil>=5.9.0
 psycopg2-binary>=2.9.0
 
 streamlit
+
+# للتشغيل والـ Inference (أساسي للـ Production)
+onnxruntime>=1.16.0
+
+# للـ Training والتحويل (Exporting)
+onnx>=1.15.0
+# لو الموديل بتاعك Scikit-Learn أو XGBoost ضيف حسب حاجتك:
+# skl2onnx>=1.16.0
+ onnxmltools
+
+ 
+redis>=5.0.0
+onnxconverter_common
+
+python-jose[cryptography]
+passlib[bcrypt] 
+python-multipart

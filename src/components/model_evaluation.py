@@ -1,10 +1,10 @@
 import os
 import sys
 import json
-import joblib
 import pandas as pd
 import numpy as np
 import mlflow
+import onnxruntime as ort
 from dataclasses import dataclass
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from src.utils.logger import logger
@@ -20,25 +20,45 @@ class ModelEvaluation:
 
     def initiate_model_evaluation(self, model_path: str, evaluation_data_path: str):
         """
-        تقييم أداء الموديل وحساب الـ Metrics (RMSE, MAE, R2) وتسجيلها في MLflow
+        تقييم أداء نموذج الـ ONNX وحساب الـ Metrics (RMSE, MAE, R2) وتسجيلها في MLflow
         """
-        logger.info("Starting Model Evaluation process with MLflow tracking...")
+        logger.info("Starting ONNX Model Evaluation process with MLflow tracking...")
         try:
             if not os.path.exists(model_path):
-                raise FileNotFoundError(f"Trained model not found at: {model_path}")
+                raise FileNotFoundError(f"Trained ONNX model not found at: {model_path}")
             if not os.path.exists(evaluation_data_path):
                 raise FileNotFoundError(f"Evaluation dataset not found at: {evaluation_data_path}")
 
-            model = joblib.load(model_path)
             eval_df = pd.read_csv(evaluation_data_path)
-            
             logger.info(f"Loaded evaluation dataset with shape: {eval_df.shape}")
 
             X = eval_df.drop(columns=['unit_number', 'time_in_cycles', 'RUL'], errors='ignore')
             y = eval_df['RUL']
 
-            predictions = model.predict(X)
+            # -------------------------------------------------------------
+            # 1. تحميل موديل ONNX وإنشاء الـ InferenceSession
+            # -------------------------------------------------------------
+            logger.info(f"Loading ONNX model session from: {model_path}")
+            session = ort.InferenceSession(model_path, providers=['CPUExecutionProvider'])
 
+            # جلب اسم الـ Input Node والـ Output Node من الـ Session
+            input_name = session.get_inputs()[0].name
+            output_name = session.get_outputs()[0].name
+
+            # -------------------------------------------------------------
+            # 2. تحويل البيانات لـ float32 وتجهيز الـ Numpy Array
+            # -------------------------------------------------------------
+            X_input = X.values.astype(np.float32)
+
+            # -------------------------------------------------------------
+            # 3. تشغيل الـ Inference باستخدام ONNX Runtime
+            # -------------------------------------------------------------
+            predictions_raw = session.run([output_name], {input_name: X_input})[0]
+            predictions = predictions_raw.flatten()
+
+            # -------------------------------------------------------------
+            # 4. حساب الـ Metrics
+            # -------------------------------------------------------------
             rmse = np.sqrt(mean_squared_error(y, predictions))
             mae = mean_absolute_error(y, predictions)
             r2 = r2_score(y, predictions)
@@ -49,7 +69,7 @@ class ModelEvaluation:
                 "R2_Score": float(r2)
             }
 
-            logger.info(f"Evaluation Metrics -> RMSE: {rmse:.4f} | MAE: {mae:.4f} | R2: {r2:.4f}")
+            logger.info(f"ONNX Evaluation Metrics -> RMSE: {rmse:.4f} | MAE: {mae:.4f} | R2: {r2:.4f}")
 
             # حفظ الـ Metrics محلياً في JSON
             os.makedirs(os.path.dirname(self.evaluation_config.metrics_file_path), exist_ok=True)
@@ -58,14 +78,14 @@ class ModelEvaluation:
 
             # تسجيل الـ Metrics في MLflow
             if mlflow.active_run() is None:
-                mlflow.start_run(run_name="Model_Evaluation", nested=True)
+                mlflow.start_run(run_name="Model_Evaluation_ONNX", nested=True)
             
             mlflow.log_metrics(metrics)
             mlflow.log_artifact(self.evaluation_config.metrics_file_path)
 
-            logger.info("Model Evaluation completed and logged to MLflow successfully.")
+            logger.info("ONNX Model Evaluation completed and logged to MLflow successfully.")
             return metrics
 
         except Exception as e:
-            logger.error("Error occurred during Model Evaluation.")
+            logger.error("Error occurred during ONNX Model Evaluation.")
             raise CustomException(e, sys)

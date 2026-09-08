@@ -4,13 +4,15 @@ import json
 import joblib
 import pandas as pd
 import numpy as np
+import onnxruntime as ort
 from dataclasses import dataclass
 from src.utils.logger import logger
 from src.utils.exception import CustomException
 
 @dataclass
 class PredictionPipelineConfig:
-    model_path: str = os.path.join("models", "xgb_rul_model.joblib")
+    # تغيير امتداد النموذج إلى .onnx
+    model_path: str = os.path.join("models", "xgb_rul_model.onnx")
     scaler_path: str = os.path.join("models", "scaler.joblib")
     features_path: str = os.path.join("models", "features.json")
 
@@ -20,18 +22,28 @@ class PredictionPipeline:
         self._load_artifacts()
 
     def _load_artifacts(self):
-        """تحميل الـ Model والـ Scaler وقائمة الـ Features المسجلة أثناء التدريب"""
+        """تحميل الـ ONNX Session والـ Scaler وقائمة الـ Features المسجلة أثناء التدريب"""
         try:
-            logger.info("Loading inference artifacts (Model, Scaler, Features list)...")
+            logger.info("Loading inference artifacts (ONNX Model Session, Scaler, Features list)...")
             
             if not os.path.exists(self.config.model_path):
-                raise FileNotFoundError(f"Model file not found at {self.config.model_path}")
+                raise FileNotFoundError(f"ONNX Model file not found at {self.config.model_path}")
             if not os.path.exists(self.config.scaler_path):
                 raise FileNotFoundError(f"Scaler file not found at {self.config.scaler_path}")
             if not os.path.exists(self.config.features_path):
                 raise FileNotFoundError(f"Features JSON file not found at {self.config.features_path}")
 
-            self.model = joblib.load(self.config.model_path)
+            # -------------------------------------------------------------
+            # 1. إنشاء ONNX Runtime Session بدلاً من joblib.load للموديل
+            # -------------------------------------------------------------
+            self.session = ort.InferenceSession(
+                self.config.model_path, 
+                providers=['CPUExecutionProvider']
+            )
+            self.input_name = self.session.get_inputs()[0].name
+            self.output_name = self.session.get_outputs()[0].name
+
+            # 2. تحميل الـ Scaler والـ Features كالمعتاد
             self.scaler = joblib.load(self.config.scaler_path)
             
             with open(self.config.features_path, "r") as f:
@@ -42,56 +54,66 @@ class PredictionPipeline:
             logger.error("Failed to load artifacts in PredictionPipeline.")
             raise CustomException(e, sys)
 
-    def _preprocess_input_data(self, df: pd.DataFrame) -> pd.DataFrame:
-            """تطبيق نفس خطوات Feature Engineering والـ Scaler تماماً كما حدث في التدريب"""
-            try:
-                df = df.copy()
-
-                # 1. نفس قائمة الأعمدة الثابتة التي تم حذفها أثناء التدريب
-                constant_cols = ['setting_3', 's_1', 's_5', 's_10', 's_16', 's_18', 's_19']
-                df.drop(columns=[c for c in constant_cols if c in df.columns], inplace=True)
-
-                # 2. استخراج الحساسات وتطبيق الـ Rolling والـ Lag تماماً مثل DataTransformation
-                sensor_cols = [c for c in df.columns if c.startswith('s_') or c.startswith('setting_')]
-                
-                for col in sensor_cols:
-                    df[f'{col}_roll_mean'] = df.groupby('unit_number')[col].transform(lambda x: x.rolling(10, min_periods=1).mean())
-                    df[f'{col}_roll_std'] = df.groupby('unit_number')[col].transform(lambda x: x.rolling(10, min_periods=1).std()).fillna(0)
-                    df[f'{col}_lag_1'] = df.groupby('unit_number')[col].shift(1)
-                    df[f'{col}_lag_1'] = df.groupby('unit_number')[f'{col}_lag_1'].bfill()
-
-                # 3. التأكد من تطابق الأعمدة مع الـ features.json المسجل
-                missing_cols = set(self.feature_names) - set(df.columns)
-                if missing_cols:
-                    raise ValueError(f"Missing required feature columns in input data: {missing_cols}")
-
-                # ترتيب الأعمدة بنفس الترتيب تماماً وقت التدريب
-                X_df = df[self.feature_names].copy()
-
-                # 4. تطبيق الـ Scaler المحفوظ فقط (Transform بدون Fit)
-                X_scaled = self.scaler.transform(X_df)
-                X_scaled_df = pd.DataFrame(X_scaled, columns=self.feature_names)
-
-                return X_scaled_df
-
-            except Exception as e:
-                logger.error("Error during input data preprocessing in PredictionPipeline.")
-                raise CustomException(e, sys)
-    def predict(self, input_df: pd.DataFrame) -> np.ndarray:
-        """تشغيل التوقع لبيانات مدخلة كـ DataFrame"""
+    def _preprocess_input_data(self, df: pd.DataFrame) -> np.ndarray:
+        """تطبيق نفس خطوات Feature Engineering والـ Scaler تماماً وتحويلها لـ float32"""
         try:
-            logger.info(f"Starting prediction for input data of shape {input_df.shape}...")
+            df = df.copy()
+
+            # 1. نفس قائمة الأعمدة الثابتة التي تم حذفها أثناء التدريب
+            constant_cols = ['setting_3', 's_1', 's_5', 's_10', 's_16', 's_18', 's_19']
+            df.drop(columns=[c for c in constant_cols if c in df.columns], inplace=True)
+
+            # 2. استخراج الحساسات وتطبيق الـ Rolling والـ Lag تماماً مثل DataTransformation
+            sensor_cols = [c for c in df.columns if c.startswith('s_') or c.startswith('setting_')]
             
-            # معالجة البيانات
-            processed_df = self._preprocess_input_data(input_df)
+            for col in sensor_cols:
+                df[f'{col}_roll_mean'] = df.groupby('unit_number')[col].transform(lambda x: x.rolling(10, min_periods=1).mean())
+                df[f'{col}_roll_std'] = df.groupby('unit_number')[col].transform(lambda x: x.rolling(10, min_periods=1).std()).fillna(0)
+                df[f'{col}_lag_1'] = df.groupby('unit_number')[col].shift(1)
+                df[f'{col}_lag_1'] = df.groupby('unit_number')[f'{col}_lag_1'].bfill()
+
+            # 3. التأكد من تطابق الأعمدة مع الـ features.json المسجل
+            missing_cols = set(self.feature_names) - set(df.columns)
+            if missing_cols:
+                raise ValueError(f"Missing required feature columns in input data: {missing_cols}")
+
+            # ترتيب الأعمدة بنفس الترتيب تماماً وقت التدريب
+            X_df = df[self.feature_names].copy()
+
+            # 4. تطبيق الـ Scaler المحفوظ فقط (Transform بدون Fit)
+            X_scaled = self.scaler.transform(X_df)
+
+            # -------------------------------------------------------------
+            # تحويل البيانات بشكل صريح لـ float32 للإنتاج مع ONNX
+            # -------------------------------------------------------------
+            return X_scaled.astype(np.float32)
+
+        except Exception as e:
+            logger.error("Error during input data preprocessing in PredictionPipeline.")
+            raise CustomException(e, sys)
+
+    def predict(self, input_df: pd.DataFrame) -> np.ndarray:
+        """تشغيل التوقع لبيانات مدخلة كـ DataFrame باستخدام ONNX Runtime"""
+        try:
+            logger.info(f"Starting ONNX prediction for input data of shape {input_df.shape}...")
             
-            # إجراء التوقع
-            predictions = self.model.predict(processed_df)
+            # معالجة البيانات وتحويلها لـ float32 Numpy Array
+            processed_array = self._preprocess_input_data(input_df)
+            
+            # -------------------------------------------------------------
+            # إجراء التوقع عبر ONNX Runtime Session
+            # -------------------------------------------------------------
+            raw_predictions = self.session.run(
+                [self.output_name], 
+                {self.input_name: processed_array}
+            )[0]
+            
+            predictions = raw_predictions.flatten()
             
             # ضمان أن الـ RUL لا يقل عن 0
             predictions = np.clip(predictions, a_min=0, a_max=None)
             
-            logger.info("Prediction completed successfully.")
+            logger.info("ONNX Prediction completed successfully.")
             return predictions
 
         except Exception as e:
@@ -123,7 +145,7 @@ if __name__ == "__main__":
         
         if os.path.exists(test_file):
             results = pipeline.predict_from_file(test_file)
-            print("\n>>> Sample Predictions Results <<<")
+            print("\n>>> Sample Predictions Results (ONNX) <<<")
             print(results.head(10))
         else:
             print(f"Test file not found at {test_file}. Run training_pipeline first.")
