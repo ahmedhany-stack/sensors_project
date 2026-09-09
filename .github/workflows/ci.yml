@@ -1,0 +1,95 @@
+name: MLOps CI Pipeline
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  code-quality-and-tests:
+    name: Code Quality & Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff pytest
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Lint Code with Ruff & Flake8
+        run: |
+          # فحص أخطاء الـ Syntax والرموز غير المستخدمة
+          ruff check . --select=E9,F63,F7,F82 --show-source
+
+      - name: Run Unit Tests with Pytest
+        run: |
+          # تشغيل الاختبارات الموجودة في مجلد tests (لو موجود)
+          if [ -d "tests" ]; then pytest tests/; else echo "No tests directory found, skipping."; fi
+
+  docker-build-and-validate:
+    name: Build & Validate Docker Compose
+    runs-on: ubuntu-latest
+    needs: code-quality-and-tests
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Create Dummy .env File
+        run: |
+          echo "AIRFLOW_UID=5000" > .env
+          echo "TELEGRAM_BOT_TOKEN=dummy_token" >> .env
+          echo "TELEGRAM_CHAT_ID=dummy_chat_id" >> .env
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Validate Docker Compose Config
+        run: |
+          docker compose config
+
+      - name: Build Airflow Image via Compose
+        run: |
+          docker compose build airflow-webserver
+
+  push-to-dockerhub:
+    name: Build & Push Image to Docker Hub
+    runs-on: ubuntu-latest
+    needs: docker-build-and-validate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/airflow-mlops:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/airflow-mlops:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
