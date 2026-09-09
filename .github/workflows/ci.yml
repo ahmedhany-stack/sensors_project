@@ -27,14 +27,12 @@ jobs:
           pip install ruff pytest
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-      - name: Lint Code with Ruff & Flake8
+      - name: Lint Code with Ruff
         run: |
-          # فحص أخطاء الـ Syntax والرموز غير المستخدمة
-          ruff check . --select=E9,F63,F7,F82 --show-source
+          ruff check . --select=E9,F63,F7,F82
 
       - name: Run Unit Tests with Pytest
         run: |
-          # تشغيل الاختبارات الموجودة في مجلد tests (لو موجود)
           if [ -d "tests" ]; then pytest tests/; else echo "No tests directory found, skipping."; fi
 
   docker-build-and-validate:
@@ -67,7 +65,7 @@ jobs:
     name: Build & Push Image to Docker Hub
     runs-on: ubuntu-latest
     needs: docker-build-and-validate
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
 
     steps:
       - name: Checkout Repository
