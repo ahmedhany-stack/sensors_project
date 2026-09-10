@@ -1,5 +1,6 @@
 import os
 import sys
+import yaml
 import pandas as pd
 import numpy as np
 import mlflow
@@ -11,20 +12,47 @@ from onnxconverter_common.data_types import FloatTensorType
 from src.utils.logger import logger
 from src.utils.exception import CustomException
 
+
+def load_config(config_path: str = "configs/config.yaml") -> dict:
+    if os.path.exists(config_path):
+        with open(config_path, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f)
+    return {}
+
+
+# تحميل الإعدادات
+config = load_config()
+trainer_cfg = config.get("model_trainer", {})
+paths_cfg = trainer_cfg.get("paths", {})
+mlflow_cfg = trainer_cfg.get("mlflow", {})
+params_cfg = trainer_cfg.get("hyperparameters", {})
+cols_cfg = trainer_cfg.get("columns", {})
+
+
 @dataclass
 class ModelTrainerConfig:
-    # امتداد الملف .onnx
-    trained_model_file_path: str = os.path.join("models", "xgb_rul_model.onnx")
+    trained_model_file_path: str = paths_cfg.get("model_file", os.path.join("models", "xgb_rul_model.onnx"))
+
 
 class ModelTrainer:
     def __init__(self):
         self.model_trainer_config = ModelTrainerConfig()
+        self.tracking_uri = mlflow_cfg.get("tracking_uri", "http://127.0.0.1:5000")
+        self.experiment_name = mlflow_cfg.get("experiment_name", "RUL_Prediction")
+        self.run_name = mlflow_cfg.get("run_name", "XGBoost_RUL_Training_ONNX")
+        self.exclude_cols = cols_cfg.get("exclude_cols", ['unit_number', 'time_in_cycles', 'RUL'])
+        
+        # Hyperparameters
+        self.n_estimators = params_cfg.get("n_estimators", 100)
+        self.learning_rate = params_cfg.get("learning_rate", 0.05)
+        self.max_depth = params_cfg.get("max_depth", 5)
+        self.random_state = params_cfg.get("random_state", 42)
 
     def initiate_model_trainer(self, transformed_train_path: str):
         logger.info("Starting Model Training with MLflow tracking and ONNX export...")
         try:
-            mlflow.set_tracking_uri("http://127.0.0.1:5000")
-            mlflow.set_experiment("RUL_Prediction")
+            mlflow.set_tracking_uri(self.tracking_uri)
+            mlflow.set_experiment(self.experiment_name)
             
             if not os.path.exists(transformed_train_path):
                 raise FileNotFoundError(f"Transformed training data not found at: {transformed_train_path}")
@@ -32,32 +60,25 @@ class ModelTrainer:
             train_df = pd.read_csv(transformed_train_path)
             logger.info(f"Loaded transformed training data with shape: {train_df.shape}")
 
-            X_train = train_df.drop(columns=['unit_number', 'time_in_cycles', 'RUL'])
+            X_train = train_df.drop(columns=self.exclude_cols, errors='ignore')
             y_train = train_df['RUL']
 
-            # Hyperparameters
-            n_estimators = 100
-            learning_rate = 0.05
-            max_depth = 5
-            random_state = 42
-
-            with mlflow.start_run(run_name="XGBoost_RUL_Training_ONNX"):
+            with mlflow.start_run(run_name=self.run_name):
                 # تسجيل الـ Parameters في MLflow
-                mlflow.log_param("n_estimators", n_estimators)
-                mlflow.log_param("learning_rate", learning_rate)
-                mlflow.log_param("max_depth", max_depth)
-                mlflow.log_param("random_state", random_state)
+                mlflow.log_param("n_estimators", self.n_estimators)
+                mlflow.log_param("learning_rate", self.learning_rate)
+                mlflow.log_param("max_depth", self.max_depth)
+                mlflow.log_param("random_state", self.random_state)
                 mlflow.log_param("model_format", "ONNX")
 
                 model = XGBRegressor(
-                    n_estimators=n_estimators,
-                    learning_rate=learning_rate,
-                    max_depth=max_depth,
-                    random_state=random_state
+                    n_estimators=self.n_estimators,
+                    learning_rate=self.learning_rate,
+                    max_depth=self.max_depth,
+                    random_state=self.random_state
                 )
 
                 logger.info("Fitting XGBoost Regressor model...")
-                # تحويل البيانات إلى NumPy Array لتفادي حفظ أسماء الأعمدة داخل الموديل
                 X_train_values = X_train.values if hasattr(X_train, 'values') else X_train
                 y_train_values = y_train.values if hasattr(y_train, 'values') else y_train
                 
@@ -69,9 +90,7 @@ class ModelTrainer:
                 logger.info("Converting XGBoost model to ONNX format...")
                 num_features = X_train.shape[1]
                 
-                # تعريف الـ Input Tensor بالأبعاد المطلوبة
                 initial_type = [('float_input', FloatTensorType([None, num_features]))]
-                
                 onnx_model = convert_xgboost(model, initial_types=initial_type)
 
                 # -------------------------------------------------------------

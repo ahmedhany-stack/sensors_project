@@ -1,15 +1,33 @@
 import os
 from datetime import datetime, timedelta
 from typing import Optional
+import yaml
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
-# الإعدادات المفتاحية للـ JWT
-SECRET_KEY = os.getenv("JWT_SECRET_KEY", "super-secret-key-change-this-in-production")
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # التوكن صالحة لمدة 24 ساعة
+
+def load_config(config_path: str = "configs/config.yaml") -> dict:
+    if os.path.exists(config_path):
+        with open(config_path, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f)
+    return {}
+
+
+# تحميل الإعدادات
+config = load_config()
+auth_cfg = config.get("auth", {})
+jwt_cfg = auth_cfg.get("jwt", {})
+
+# إعداد المتغيرات من الـ Config والـ Environment
+SECRET_KEY = os.getenv(
+    "JWT_SECRET_KEY", 
+    jwt_cfg.get("default_secret_key", "super-secret-key-change-this-in-production")
+)
+ALGORITHM = jwt_cfg.get("algorithm", "HS256")
+ACCESS_TOKEN_EXPIRE_MINUTES = jwt_cfg.get("access_token_expire_minutes", 1440)
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
 
 def hash_password(password: str) -> str:
     return pwd_context.hash(password)

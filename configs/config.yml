@@ -1,44 +1,124 @@
-database:
-  db_name: "rul_db"
-  db_port: "5432"
-  historical_train_table: "historical_training_data"
-  historical_test_table: "historical_test_data"
-  prediction_logs_table: "prediction_logs"
+app:
+  title: "Engine RUL API with Monitoring & Redis Cache"
+  version: "1.0.0"
 
 data_ingestion:
-  raw_train_path: "data/raw/train_FD001.txt"
-  raw_test_path: "data/raw/test_FD001.txt"
-  ingested_train_path: "data/processed/train.csv"
-  ingested_test_path: "data/processed/test.csv"
+  paths:
+    raw_train: "data/raw/train_FD001.txt"
+    raw_test: "data/raw/test_FD001.txt"
+    ingested_train: "data/processed/train.csv"
+    ingested_test: "data/processed/test.csv"
+  database:
+    default_host: "localhost"
+    default_port: "5432"
+    default_db_name: "rul_db"
+    train_table: "historical_training_data"
+    test_table: "historical_test_data"
+  columns:
+    base: ["unit_number", "time_in_cycles", "setting_1", "setting_2", "setting_3"]
+    num_sensors: 21
 
 data_validation:
-  status_file_path: "data/processed/data_validation_status.txt"
+  paths:
+    status_file: "data/processed/data_validation_status.txt"
+  schema:
+    base_columns: ["unit_number", "time_in_cycles", "setting_1", "setting_2", "setting_3"]
+    num_sensors: 21
 
 data_transformation:
-  transformed_train_path: "data/features/transformed_train.csv"
-  transformed_test_path: "data/features/transformed_test.csv"
-  scaler_path: "models/scaler.joblib"
-  features_path: "models/features.json"
-  clip_rul_upper: 125
-  constant_cols:
-    - "setting_3"
-    - "s_1"
-    - "s_5"
-    - "s_10"
-    - "s_16"
-    - "s_18"
-    - "s_19"
+  paths:
+    transformed_train: "data/features/transformed_train.csv"
+    transformed_test: "data/features/transformed_test.csv"
+    scaler: "models/scaler.joblib"
+    features_json: "models/features.json"
+    y_column: "data/raw/RUL_FD001.txt"
+  rul:
+    clip_upper: 125
+  feature_engineering:
+    rolling_window: 10
+    rolling_min_periods: 1
+    lag_step: 1
+  columns:
+    constant_cols: ['setting_3', 's_1', 's_5', 's_10', 's_16', 's_18', 's_19']
+    exclude_cols: ['unit_number', 'time_in_cycles', 'RUL']
 
 model_trainer:
-  trained_model_file_path: "models/xgb_rul_model.joblib"
-  params:
+  paths:
+    model_file: "models/xgb_rul_model.onnx"
+  mlflow:
+    tracking_uri: "http://127.0.0.1:5000"
+    experiment_name: "RUL_Prediction"
+    run_name: "XGBoost_RUL_Training_ONNX"
+  hyperparameters:
     n_estimators: 100
     learning_rate: 0.05
     max_depth: 5
     random_state: 42
+  columns:
+    exclude_cols: ['unit_number', 'time_in_cycles', 'RUL']
 
 model_evaluation:
-  metrics_file_path: "models/metrics.json"
+  paths:
+    metrics_file: "models/metrics.json"
+  mlflow:
+    run_name: "Model_Evaluation_ONNX"
+  onnx:
+    providers: ["CPUExecutionProvider"]
+  columns:
+    exclude_cols: ['unit_number', 'time_in_cycles', 'RUL']
 
-mlflow:
-  experiment_name: "RUL_Prediction_MLOps"
+monitoring:
+  logger_name: "RUL_Monitoring"
+  logging:
+    log_dir: "logs"
+    log_level: "INFO"
+    date_format: "%Y_%m_%d_%H_%M_%S"
+    log_format: "[ %(asctime)s ] %(lineno)d %(name)s - %(levelname)s - %(message)s"
+  drift:
+    default_html_report_path: "reports/drift_report.html"
+    default_save_html: true
+    reference_data_path: "data/processed/reference_data.csv"
+
+auth:
+  token_url: "token"
+  messages:
+    invalid_credentials: "Could not validate credentials"
+    forbidden: "Operation not permitted: Insufficient permissions"
+  jwt:
+    algorithm: "HS256"
+    access_token_expire_minutes: 1440
+    default_secret_key: "super-secret-key-change-this-in-production"
+
+database:
+  defaults:
+    user: "airflow"
+    host: "127.0.0.1"
+    port: 5433
+    name: "airflow"
+  table_names:
+    prediction_logs: "prediction_logs"
+  keys:
+    unit_number: "unit_number"
+    time_in_cycles: "time_in_cycles"
+
+redis:
+  host: "redis"
+  port: 6379
+  cache_expiration_seconds: 3600
+  cache_prefix: "rul_cache"
+
+reports:
+  drift_report_path: "reports/drift_report.html"
+
+users:
+  fake_db:
+    admin:
+      username: "admin"
+      password_env_var: "ADMIN_PASSWORD"
+      default_password: "admin123"
+      role: "admin"
+    user1:
+      username: "user1"
+      password_env_var: "USER1_PASSWORD"
+      default_password: "user123"
+      role: "analyst"

@@ -2,8 +2,9 @@ FROM apache/airflow:2.7.1
 
 USER root
 
-# تثبيت أدوات النظام الأساسية
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# تثبيت أدوات النظام مع إمكانية تجاوز انتهاء صلاحية مستودعات Debian Oldstable
+RUN apt-get update --allow-releaseinfo-change || true && \
+    apt-get install -y --no-install-recommends \
     build-essential \
     libpq-dev \
     && apt-get clean \
@@ -11,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 USER airflow
 
-# تثبيت المكتبات الأساسية بنطاقات آمنة تمنع أي تضارب
+# تثبيت المكتبات وتضمين مكتبات ONNX المطلوبة
 RUN pip install --no-cache-dir \
     "numpy>=1.22,<2.0" \
     "pandas>=2.0.0,<2.2.0" \
@@ -30,4 +31,8 @@ RUN pip install --no-cache-dir \
     "scipy>=1.9.0,<1.11.0" \
     statsmodels \
     nltk \
-    psycopg2-binary
+    psycopg2-binary \
+    onnxmltools \
+    onnxconverter_common \
+    skl2onnx \
+    onnxruntime

@@ -4,6 +4,7 @@ import json
 import hashlib
 import asyncio
 import logging
+import yaml
 from contextlib import asynccontextmanager
 from typing import Dict, Any
 
@@ -32,27 +33,50 @@ from src.api.database import save_predictions_to_db
 from src.api.auth import create_access_token, verify_password, hash_password
 from src.api.dependencies import get_current_user, require_role
 
+
+def load_config(config_path: str = "configs/config.yaml") -> dict:
+    if os.path.exists(config_path):
+        with open(config_path, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f)
+    return {}
+
+
+# تحميل كافة الإعدادات
+config = load_config()
+app_cfg = config.get("app", {})
+redis_cfg = config.get("redis", {})
+reports_cfg = config.get("reports", {})
+users_cfg = config.get("users", {}).get("fake_db", {})
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("RUL_API")
 
 # ==========================================
-# MOCK USER DATABASE (للتجربة والربط)
+# MOCK USER DATABASE (توليد المستخدمين مع تصحيح جلب الباسورد)
 # ==========================================
-# كلمات السر المشفرة القابلة للتجربة:
-# admin / admin123  -> role: admin
-# user1 / user123   -> role: analyst
-FAKE_USERS_DB = {
-    "admin": {
+FAKE_USERS_DB = {}
+for u_key, u_data in users_cfg.items():
+    env_var_name = u_data.get("password_env_var")
+    
+    # جلب الباسورد من الـ ENV إذا وُجدت وقيمتها ليست فارغة، وإلا استخدام الـ default_password
+    env_val = os.getenv(env_var_name) if env_var_name else None
+    raw_pwd = env_val if env_val else u_data.get("default_password")
+
+    username = u_data.get("username", u_key)
+
+    FAKE_USERS_DB[username] = {
+        "username": username,
+        "hashed_password": hash_password(str(raw_pwd)),
+        "role": u_data.get("role")
+    }
+
+# ضمان وجود حساب admin احتياطي دائماً لبيئة التطوير
+if "admin" not in FAKE_USERS_DB:
+    FAKE_USERS_DB["admin"] = {
         "username": "admin",
         "hashed_password": hash_password("admin123"),
         "role": "admin"
-    },
-    "user1": {
-        "username": "user1",
-        "hashed_password": hash_password("user123"),
-        "role": "analyst"
     }
-}
 
 # ==========================================
 # PROMETHEUS METRICS DEFINITIONS
@@ -77,7 +101,7 @@ PREDICTED_RUL_GAUGE = Gauge(
 CACHE_HITS = Counter(
     "cache_hits_total",
     "Total Cache Hits in Redis",
-    ["status"] # hit or miss
+    ["status"]
 )
 
 ml_artifacts: Dict[str, Any] = {}
@@ -85,16 +109,16 @@ ml_artifacts: Dict[str, Any] = {}
 # ==========================================
 # REDIS CONFIGURATION
 # ==========================================
-REDIS_HOST = os.getenv("REDIS_HOST", "redis")
-REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
-CACHE_EXPIRATION_SECONDS = 3600  # حفظ التوقع في الكاش لمدة ساعة
+REDIS_HOST = os.getenv("REDIS_HOST", redis_cfg.get("host", "redis"))
+REDIS_PORT = int(os.getenv("REDIS_PORT", redis_cfg.get("port", 6379)))
+CACHE_EXPIRATION_SECONDS = redis_cfg.get("cache_expiration_seconds", 3600)
+CACHE_PREFIX = redis_cfg.get("cache_prefix", "rul_cache")
 
 
 def generate_cache_key(records_list: list) -> str:
-    """توليد Hash فريد بناءً على المدخلات لضمان عدم تكرار التوقعات المتشابهة"""
     serialized_data = json.dumps(records_list, sort_keys=True)
     hash_value = hashlib.md5(serialized_data.encode('utf-8')).hexdigest()
-    return f"rul_cache:{hash_value}"
+    return f"{CACHE_PREFIX}:{hash_value}"
 
 
 @asynccontextmanager
@@ -126,14 +150,17 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    # Cleanup عند الإغلاق
     if ml_artifacts.get("redis"):
         ml_artifacts["redis"].close()
     ml_artifacts.clear()
     logger.info("API server shutdown complete.")
 
 
-app = FastAPI(title="Engine RUL API with Monitoring & Redis Cache", lifespan=lifespan)
+app = FastAPI(
+    title=app_cfg.get("title", "Engine RUL API"), 
+    version=app_cfg.get("version", "1.0.0"),
+    lifespan=lifespan
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -144,9 +171,6 @@ app.add_middleware(
 )
 
 
-# ==========================================
-# AUTHENTICATION ENDPOINT
-# ==========================================
 @app.post("/token", response_model=Token, tags=["Authentication"])
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
     user = FAKE_USERS_DB.get(form_data.username)
@@ -173,7 +197,6 @@ async def root():
     }
 
 
-# Endpoint خاص بـ Prometheus لمسح البيانات
 @app.get("/metrics", tags=["Monitoring"])
 async def metrics():
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
@@ -185,7 +208,7 @@ async def health_check():
     return HealthCheckResponse(
         status="healthy" if is_loaded else "unhealthy",
         model_loaded=is_loaded,
-        version="1.0.0"
+        version=app_cfg.get("version", "1.0.0")
     )
 
 
@@ -193,7 +216,7 @@ async def health_check():
 async def predict_rul(
     payload: BatchPredictionInput, 
     background_tasks: BackgroundTasks,
-    current_user: TokenData = Depends(get_current_user)  # [AUTH PROTECTED]
+    current_user: TokenData = Depends(get_current_user)
 ):
     start_time = time.time()
 
@@ -208,9 +231,6 @@ async def predict_rul(
         
         cached_predictions = None
 
-        # -------------------------------------------------------------
-        # 1. فحص الكاش في Redis أولاً (Cache Hit Check)
-        # -------------------------------------------------------------
         if redis_client:
             try:
                 cached_data = redis_client.get(cache_key)
@@ -221,9 +241,6 @@ async def predict_rul(
             except Exception as cache_err:
                 logger.warning(f"Error reading from Redis cache: {cache_err}")
 
-        # -------------------------------------------------------------
-        # 2. في حالة عدم وجود الكاش (Cache Miss): تشغيل الـ ONNX Model
-        # -------------------------------------------------------------
         if cached_predictions is None:
             if redis_client:
                 CACHE_HITS.labels(status="miss").inc()
@@ -234,7 +251,6 @@ async def predict_rul(
             
             raw_preds_list = raw_predictions.tolist() if hasattr(raw_predictions, 'tolist') else list(raw_predictions)
 
-            # حفظ البيانات في PostgreSQL في الخلفية لعدم إبطاء الـ Response
             background_tasks.add_task(save_predictions_to_db, input_data, raw_preds_list)
 
             predictions = []
@@ -245,7 +261,6 @@ async def predict_rul(
                     "predicted_rul": round(float(pred), 2)
                 })
 
-            # حفظ النتيجة الجديدة في Redis لمدة 3600 ثانية
             if redis_client:
                 try:
                     redis_client.setex(
@@ -256,10 +271,8 @@ async def predict_rul(
                 except Exception as cache_err:
                     logger.warning(f"Failed to set value in Redis: {cache_err}")
         else:
-            # البيانات تم جلبها من الكاش مباشرة
             predictions = cached_predictions
 
-        # تحديث مقاييس Prometheus للجلستين (سواء كانت من الكاش أو الموديل)
         for item in predictions:
             PREDICTED_RUL_GAUGE.labels(unit_number=str(item["unit_number"])).set(item["predicted_rul"])
 
@@ -286,9 +299,9 @@ async def predict_rul(
 
 @app.get("/monitoring/report", tags=["Monitoring"])
 async def get_drift_report(
-    current_user: TokenData = Depends(require_role(["admin"]))  # [AUTHORIZATION: ADMIN ONLY]
+    current_user: TokenData = Depends(require_role(["admin"]))
 ):
-    report_path = os.path.join("reports", "drift_report.html")
+    report_path = reports_cfg.get("drift_report_path", os.path.join("reports", "drift_report.html"))
     if os.path.exists(report_path):
         return FileResponse(report_path)
     raise HTTPException(status_code=404, detail="Report not generated yet.")

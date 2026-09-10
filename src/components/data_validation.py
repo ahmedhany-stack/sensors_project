@@ -1,19 +1,43 @@
 import os
 import sys
+import yaml
 import pandas as pd
 from dataclasses import dataclass
 from src.utils.logger import logger
 from src.utils.exception import CustomException
 
+
+def load_config(config_path: str = "configs/config.yaml") -> dict:
+    if os.path.exists(config_path):
+        with open(config_path, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f)
+    return {}
+
+
+# تحميل الإعدادات
+config = load_config()
+val_cfg = config.get("data_validation", {})
+paths_cfg = val_cfg.get("paths", {})
+schema_cfg = val_cfg.get("schema", {})
+
+
 @dataclass
 class DataValidationConfig:
-    status_file_path: str = os.path.join("data", "processed", "data_validation_status.txt")
+    status_file_path: str = paths_cfg.get(
+        "status_file", os.path.join("data", "processed", "data_validation_status.txt")
+    )
+
 
 class DataValidation:
     def __init__(self):
         self.validation_config = DataValidationConfig()
-        # تعريف الأعمدة الأساسية المتوقعة لمشروع الـ RUL (Turbofan Engine)
-        self.expected_columns = ['unit_number', 'time_in_cycles', 'setting_1', 'setting_2', 'setting_3'] + [f's_{i}' for i in range(1, 22)]
+        
+        # قراءة الأعمدة المتوقعة ديناميكياً من ملف الـ Config
+        base_cols = schema_cfg.get(
+            "base_columns", ['unit_number', 'time_in_cycles', 'setting_1', 'setting_2', 'setting_3']
+        )
+        num_sensors = schema_cfg.get("num_sensors", 21)
+        self.expected_columns = base_cols + [f's_{i}' for i in range(1, num_sensors + 1)]
 
     def validate_all_columns(self, train_path: str) -> bool:
         """
@@ -23,7 +47,6 @@ class DataValidation:
         """
         logger.info("Starting Data Validation process...")
         try:
-            # قراءة البيانات (سواء جاية من الـ CSV المؤقت اللي جهزه الـ Ingestion من الـ DB، أو مسار مباشر)
             if not os.path.exists(train_path):
                 raise FileNotFoundError(f"Training data path not found at: {train_path}")
                 
@@ -50,7 +73,7 @@ class DataValidation:
             else:
                 logger.info("Null values validation passed: No missing values found.")
 
-            # كتابة حالة الفحص في ملف الـ Status (عشان الـ Airflow أو البايبلاين يقراها)
+            # كتابة حالة الفحص في ملف الـ Status
             os.makedirs(os.path.dirname(self.validation_config.status_file_path), exist_ok=True)
             with open(self.validation_config.status_file_path, "w") as f:
                 f.write(f"Validation status: {validation_status}")

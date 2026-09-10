@@ -1,4 +1,6 @@
+import os
 import sys
+import yaml
 from src.utils.logger import logger
 from src.utils.exception import CustomException
 from src.components.data_ingestion import DataIngestion
@@ -7,9 +9,17 @@ from src.components.data_transformation import DataTransformation
 from src.components.model_trainer import ModelTrainer
 from src.components.model_evaluation import ModelEvaluation
 
+
+def load_config(config_path: str = "configs/config.yaml") -> dict:
+    if os.path.exists(config_path):
+        with open(config_path, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f)
+    return {}
+
+
 class TrainingPipeline:
-    def __init__(self):
-        pass
+    def __init__(self, config_path: str = "configs/config.yaml"):
+        self.config = load_config(config_path)
 
     def run_pipeline(self):
         try:
@@ -29,7 +39,7 @@ class TrainingPipeline:
             validation_status = validation.validate_all_columns(train_path)
             
             if not validation_status:
-                raise Exception("Data Validation failed! Aborting pipeline.")
+                raise ValueError("Data Validation failed! Aborting pipeline.")
             logger.info(f"Data Validation Passed: {validation_status}")
 
             # Step 3: Data Transformation
@@ -44,7 +54,7 @@ class TrainingPipeline:
             model_path = trainer.initiate_model_trainer(transformed_train_path)
             logger.info(f"Model Training Finished. Saved Model Path: {model_path}")
 
-            # Step 5: Model Evaluation (تقييم الموديل على بيانات الـ Test المعالجة)
+            # Step 5: Model Evaluation
             logger.info(">>> Stage 5: Model Evaluation Started <<<")
             evaluation = ModelEvaluation()
             metrics = evaluation.initiate_model_evaluation(model_path, transformed_test_path)
@@ -54,9 +64,12 @@ class TrainingPipeline:
             logger.info(">>>> Training Pipeline Completed Successfully! <<<<")
             logger.info("=" * 50)
 
+            return metrics
+
         except Exception as e:
             logger.error("Training Pipeline failed at one of the stages.")
             raise CustomException(e, sys)
+
 
 if __name__ == "__main__":
     pipeline = TrainingPipeline()
