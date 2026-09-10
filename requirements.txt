@@ -51,5 +51,9 @@ redis>=5.0.0
 onnxconverter_common
 
 python-jose[cryptography]
-passlib[bcrypt] 
+
 python-multipart
+
+
+passlib[bcrypt] 
+bcrypt==4.0.1
