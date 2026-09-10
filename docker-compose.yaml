@@ -7,12 +7,10 @@ x-airflow-common:
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
     AIRFLOW__CORE__LOAD_EXAMPLES: 'False'
     PYTHONPATH: "/opt/airflow"
-    _PIP_ADDITIONAL_REQUIREMENTS: "onnxmltools onnxconverter_common skl2onnx onnxruntime"
     TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN}"
     TELEGRAM_CHAT_ID: "${TELEGRAM_CHAT_ID}"
     DB_HOST: "postgres"
     DB_PORT: "5432"
-    # إضافة متغيرات بيئة Redis لتستخدمها داخل الـ DAGs أو الموديل بسهولة
     REDIS_HOST: "redis"
     REDIS_PORT: "6379"
     MLFLOW_TRACKING_URI: "http://host.docker.internal:5000"
@@ -23,7 +21,6 @@ x-airflow-common:
     - ./src:/opt/airflow/src
     - ./data:/opt/airflow/data
     - ./reports:/opt/airflow/reports
-    - .env:/opt/airflow/.env
   user: "${AIRFLOW_UID:-5000}:0"
   depends_on:
     &airflow-common-depends-on
@@ -55,9 +52,6 @@ services:
       start_period: 5s
     restart: always
 
-  # -------------------------------------------------------------
-  # إضافة خدمة Redis المجانية كـ Cache Store مستقل
-  # -------------------------------------------------------------
   redis:
     image: redis:alpine
     container_name: redis_cache
@@ -96,14 +90,17 @@ services:
       - -c
       - |
         mkdir -p /sources/logs /sources/dags /sources/plugins /sources/src
-        chown -R "${AIRFLOW_UID}:0" /sources/{logs,dags,plugins,src}
-        exec /entrypoint airflow version
+        chown -R "${AIRFLOW_UID:-5000}:0" /sources/{logs,dags,plugins,src}
+        airflow db init
+        airflow users create \
+          --username "${_AIRFLOW_WWW_USER_USERNAME:-airflow}" \
+          --password "${_AIRFLOW_WWW_USER_PASSWORD:-airflow}" \
+          --firstname Airflow \
+          --lastname Admin \
+          --role Admin \
+          --email admin@example.com || true
     environment:
       <<: *airflow-common-env
-      _AIRFLOW_DB_UPGRADE: 'true'
-      _AIRFLOW_WWW_USER_CREATE: 'true'
-      _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow}
-      _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
     user: "0:0"
     volumes:
       - .:/sources
