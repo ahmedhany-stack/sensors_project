@@ -2,17 +2,23 @@ import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import patch
 
-from src.api.app import app, ml_artifacts
+from src.api.app import app, ml_artifacts, get_current_user  # استورد get_current_user أو اسم دالة الـ Auth عندك
 
 @pytest.fixture(scope="module")
 def client():
-    """Fixture لتشغيل الـ TestClient مع تفعيل الـ lifespan مسبقاً وتعديل مسار الـ patch"""
+    """Fixture لتشغيل الـ TestClient مع تفعيل الـ lifespan وتجاوز التوثيق (Auth)"""
+    # تجاوز دالة الـ Auth لإعادة مستخدم وهمي أثناء الاختبارات
+    app.dependency_overrides[get_current_user] = lambda: {"username": "test_user"}
+    
     with patch("src.api.app.PredictionPipeline") as mock_pipeline_class:
         mock_pipeline_instance = mock_pipeline_class.return_value
-        mock_pipeline_instance.predict.return_value = [120.5, 85.2]
+        mock_pipeline_instance.predict.return_value = [120.5]
         
         with TestClient(app) as c:
             yield c
+            
+    # إزالة الـ override بعد انتهاء الاختبارات
+    app.dependency_overrides.clear()
 
 def test_root_endpoint(client):
     """اختبار نقطة البداية والتأكد من رجوع الـ Documentation والـ Metrics"""
@@ -73,7 +79,7 @@ def test_predict_endpoint_success(client):
         ]
     }
     
-    # عمل Mock لدالة حفظ الداتا في الدेटाبيس عشان التيست يكون مستقل
+    # عمل Mock لدالة حفظ الداتا في الداتا بيس عشان التيست يكون مستقل
     with patch("src.api.app.save_predictions_to_db") as mock_save_db:
         response = client.post("/predict", json=payload)
         
@@ -91,7 +97,6 @@ def test_predict_endpoint_model_unavailable(client):
     original_status = ml_artifacts.get("model_loaded")
     ml_artifacts["model_loaded"] = False
     
-    # استخدام Payload صحيح كحقول عشان الـ validation يعدي ويظهر الـ 503 الخاصة بالموديل
     payload = {
         "records": [
             {

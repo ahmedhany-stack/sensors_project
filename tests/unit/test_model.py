@@ -2,8 +2,7 @@ import os
 import pytest
 import numpy as np
 import pandas as pd
-from xgboost import XGBRegressor
-import joblib
+import onnxruntime as rt
 from unittest.mock import patch
 from src.components.model_trainer import ModelTrainer
 
@@ -21,35 +20,32 @@ def sample_training_data(tmp_path):
     df.to_csv(file_path, index=False)
     return str(file_path)
 
-@patch("mlflow.start_run")
-@patch("mlflow.xgboost.log_model")
-@patch("mlflow.log_param")
-def test_model_trainer_and_prediction(mock_log_param, mock_log_model, mock_start_run, sample_training_data, tmp_path, monkeypatch):
-    """اختبار عملية التدريب مع عمل Mock لـ MLflow لتجنب التعليق، وحفظ الموديل والتأكد من سلامة المخرجات"""
+def test_model_trainer_and_prediction(sample_training_data, tmp_path, monkeypatch):
+    """اختبار عملية التدريب، التصدير لـ ONNX، واختبار التوقع بواسطة ONNX Runtime"""
     
-    # تغيير مسار الحفظ المؤقت عشان التست يكون معزول (Isolated)
+    # 1. إعداد مسار حفظ ملف ONNX المؤقت
     model_dir = tmp_path / "models"
-    model_path = model_dir / "xgb_rul_model.joblib"
-    
+    model_dir.mkdir(parents=True, exist_ok=True)
+    model_path = model_dir / "xgb_rul_model.onnx"
+
     monkeypatch.setattr("src.components.model_trainer.ModelTrainerConfig.trained_model_file_path", str(model_path))
 
+    # 2. تشغيل عملية التدريب والتصدير
     trainer = ModelTrainer()
     saved_path = trainer.initiate_model_trainer(sample_training_data)
 
-    # 1. التأكد إن الموديل اتحفظ في المسار الصحيح
+    # 3. التأكد من إنشاء الملف في المسار المخصص
     assert os.path.exists(saved_path)
 
-    # 2. تحميل الموديل والتأكد من إنه نوع XGBRegressor
-    loaded_model = joblib.load(saved_path)
-    assert isinstance(loaded_model, XGBRegressor)
-
-    # 3. اختبار التوقع (Prediction) والتأكد إن المخرجات عبارة عن Array ومنفذة صح
-    sample_X = pd.DataFrame({
-        's_1': [518.67],
-        's_2': [641.95]
-    })
+    # 4. قراءة نموذج ONNX واختبار التوقع (Inference) عبر ONNX Runtime
+    session = rt.InferenceSession(saved_path)
+    input_name = session.get_inputs()[0].name
     
-    predictions = loaded_model.predict(sample_X)
+    # تجهيز المدخلات بنفس عدد الخصائص المتوقعة (s_1, s_2)
+    sample_input = np.array([[518.67, 641.95]], dtype=np.float32)
+    predictions = session.run(None, {input_name: sample_input})[0]
+
+    # 5. التأكد من صحة مخرجات التوقع
     assert isinstance(predictions, np.ndarray)
     assert len(predictions) == 1
-    assert isinstance(float(predictions[0]), float)
+    assert isinstance(float(predictions[0][0]), float)

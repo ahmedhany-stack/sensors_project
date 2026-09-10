@@ -9,21 +9,22 @@ from src.components.data_transformation import DataTransformation
 
 @pytest.fixture
 def sample_raw_data(tmp_path):
-    """إعداد عينة داتا خام وهمية تحاكي داتا السنسورات (CMAPSS format)"""
-    df = pd.DataFrame({
+    """إعداد عينة داتا خام وهمية تحتوي على كافة الأعمدة المطلوبة (CMAPSS format)"""
+    columns = ["unit_number", "time_in_cycles", "setting_1", "setting_2", "setting_3"] + [f"s_{i}" for i in range(1, 22)]
+    
+    data = {
         'unit_number': [1, 1, 1, 2, 2, 2],
         'time_in_cycles': [1, 2, 3, 1, 2, 3],
         'setting_1': [0.0007, 0.0001, -0.0003, 0.0010, 0.0005, -0.0002],
         'setting_2': [0.0000, 0.0002, -0.0001, 0.0001, -0.0003, 0.0004],
         'setting_3': [100.0, 100.0, 100.0, 100.0, 100.0, 100.0],
-        's_1': [518.67, 518.67, 518.67, 518.67, 518.67, 518.67],
-        's_2': [641.82, 642.15, 642.30, 641.90, 642.00, 642.10],
-        's_5': [14.62, 14.62, 14.62, 14.62, 14.62, 14.62],
-        's_10': [1.3, 1.3, 1.3, 1.3, 1.3, 1.3],
-        's_16': [0.03, 0.03, 0.03, 0.03, 0.03, 0.03],
-        's_18': [2388.0, 2388.0, 2388.0, 2388.0, 2388.0, 2388.0],
-        's_19': [100.0, 100.0, 100.0, 100.0, 100.0, 100.0]
-    })
+    }
+    
+    # إضافة قيم الحساسات من s_1 إلى s_21
+    for i in range(1, 22):
+        data[f's_{i}'] = [500.0 + i, 501.0 + i, 502.0 + i, 500.0 + i, 501.0 + i, 502.0 + i]
+        
+    df = pd.DataFrame(data)
     
     train_file = tmp_path / "train.csv"
     test_file = tmp_path / "test.csv"
