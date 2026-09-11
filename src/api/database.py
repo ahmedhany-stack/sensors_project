@@ -29,7 +29,7 @@ db_user = os.getenv("DB_USER", defaults.get("user", "airflow"))
 db_password = os.getenv("DB_PASSWORD", "airflow")
 db_host = os.getenv("DB_HOST", defaults.get("host", "127.0.0.1"))
 db_port = os.getenv("DB_PORT", str(defaults.get("port", 5433)))
-db_name = os.getenv("DB_NAME", defaults.get("name", "airflow"))
+db_name = os.getenv("DB_NAME", defaults.get("name", "rul_db"))
 
 # بناء رابط الاتصال
 DATABASE_URL = f"postgresql+psycopg2://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
