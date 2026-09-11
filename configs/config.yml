@@ -29,7 +29,8 @@ data_transformation:
   paths:
     transformed_train: "data/features/transformed_train.csv"
     transformed_test: "data/features/transformed_test.csv"
-    scaler: "models/scaler.joblib"
+    output_onnx_path: "models/full_rul_pipeline.onnx"
+    scaler: "models/scaler.onnx"
     features_json: "models/features.json"
     y_column: "data/raw/RUL_FD001.txt"
   rul:

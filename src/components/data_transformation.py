@@ -1,12 +1,13 @@
 import os
 import sys
 import json
-import joblib
 import yaml
 import pandas as pd
 import numpy as np
 from dataclasses import dataclass
 from sklearn.preprocessing import StandardScaler
+from skl2onnx import convert_sklearn
+from skl2onnx.common.data_types import FloatTensorType
 from src.utils.logger import logger
 from src.utils.exception import CustomException
 
@@ -31,7 +32,7 @@ cols_cfg = trans_cfg.get("columns", {})
 class DataTransformationConfig:
     transformed_train_path: str = paths_cfg.get("transformed_train", os.path.join("data", "features", "transformed_train.csv"))
     transformed_test_path: str = paths_cfg.get("transformed_test", os.path.join("data", "features", "transformed_test.csv"))
-    scaler_path: str = paths_cfg.get("scaler", os.path.join("models", "scaler.joblib"))
+    scaler_path: str = paths_cfg.get("scaler", os.path.join("models", "scaler.onnx"))
     features_path: str = paths_cfg.get("features_json", os.path.join("models", "features.json"))
 
 
@@ -107,9 +108,16 @@ class DataTransformation:
             train_df[feature_cols] = scaler.fit_transform(train_df[feature_cols])
             test_df[feature_cols] = scaler.transform(test_df[feature_cols])
             
-            # 5. حفظ الـ Scaler والبيانات المحولة
+            # 5. تحويل الـ Scaler إلى ONNX وحفظه
             os.makedirs(os.path.dirname(self.transformation_config.scaler_path), exist_ok=True)
-            joblib.dump(scaler, self.transformation_config.scaler_path)
+            
+            initial_type = [('float_input', FloatTensorType([None, len(feature_cols)]))]
+            onnx_scaler = convert_sklearn(scaler, initial_types=initial_type)
+            
+            with open(self.transformation_config.scaler_path, "wb") as f:
+                f.write(onnx_scaler.SerializeToString())
+                
+            logger.info(f"Saved ONNX Scaler successfully to {self.transformation_config.scaler_path}")
 
             os.makedirs(os.path.dirname(self.transformation_config.transformed_train_path), exist_ok=True)
             train_df.to_csv(self.transformation_config.transformed_train_path, index=False)

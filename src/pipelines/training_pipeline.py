@@ -1,6 +1,9 @@
 import os
 import sys
 import yaml
+import onnx
+from onnx import compose
+
 from src.utils.logger import logger
 from src.utils.exception import CustomException
 from src.components.data_ingestion import DataIngestion
@@ -20,6 +23,55 @@ def load_config(config_path: str = "configs/config.yaml") -> dict:
 class TrainingPipeline:
     def __init__(self, config_path: str = "configs/config.yaml"):
         self.config = load_config(config_path)
+
+    def export_combined_onnx_pipeline(
+        self, 
+        scaler_onnx_path: str = "models/scaler.onnx", 
+        model_onnx_path: str = "models/xgb_rul_model.onnx", 
+        output_onnx_path: str = "models/full_rul_pipeline.onnx"
+    ):
+        """
+        دمج ملف الـ Scaler وملف الـ XGBoost باستخدام compose.add_prefix
+        لتفادي تعارض الأسماء و اختلاف الـ IR Versions.
+        """
+        try:
+            logger.info("Starting ONNX Graph merging directly from .onnx files...")
+
+            # 1. تحميل الملفين
+            scaler_model = onnx.load(scaler_onnx_path)
+            regressor_model = onnx.load(model_onnx_path)
+
+            # 2. توحيد الـ IR Version
+            target_ir_version = max(scaler_model.ir_version, regressor_model.ir_version)
+            scaler_model.ir_version = target_ir_version
+            regressor_model.ir_version = target_ir_version
+
+            # 3. إضافة Prefix للنموذج الثاني لتجنب تكرار أسماء النودز
+            regressor_model = compose.add_prefix(regressor_model, prefix="xgb_")
+
+            # 4. استخراج اسم مخرج الـ Scaler واسم مدخل الـ XGBoost بعد إضافة الـ Prefix
+            scaler_output_name = scaler_model.graph.output[0].name
+            model_input_name = regressor_model.graph.input[0].name
+
+            logger.info(f"Connecting Scaler Output [{scaler_output_name}] -> Model Input [{model_input_name}]")
+
+            # 5. دمج الـ Models
+            combined_onnx = compose.merge_models(
+                scaler_model,
+                regressor_model,
+                io_map=[(scaler_output_name, model_input_name)]
+            )
+
+            # 6. حفظ ملف الـ ONNX المدمج النهائي
+            os.makedirs(os.path.dirname(output_onnx_path), exist_ok=True)
+            onnx.save(combined_onnx, output_onnx_path)
+
+            logger.info(f"Combined Scaler + Model ONNX saved successfully to: {output_onnx_path}")
+            return output_onnx_path
+
+        except Exception as e:
+            logger.error("Failed to export combined ONNX pipeline.")
+            raise CustomException(e, sys)
 
     def run_pipeline(self):
         try:
@@ -45,19 +97,26 @@ class TrainingPipeline:
             # Step 3: Data Transformation
             logger.info(">>> Stage 3: Data Transformation Started <<<")
             transformation = DataTransformation()
-            transformed_train_path, transformed_test_path, scaler_path = transformation.initiate_data_transformation(train_path, test_path)
+            transformed_train_path, transformed_test_path, scaler_onnx_path = transformation.initiate_data_transformation(train_path, test_path)
             logger.info(f"Transformation Finished. Transformed Train Path: {transformed_train_path}, Transformed Test Path: {transformed_test_path}")
 
             # Step 4: Model Training
             logger.info(">>> Stage 4: Model Training Started <<<")
             trainer = ModelTrainer()
-            model_path = trainer.initiate_model_trainer(transformed_train_path)
-            logger.info(f"Model Training Finished. Saved Model Path: {model_path}")
+            model_onnx_path = trainer.initiate_model_trainer(transformed_train_path)
+            logger.info(f"Model Training Finished. Saved Model Path: {model_onnx_path}")
+
+            # Step 4.5: Direct ONNX Graph Merge (مع إضافة Prefix)
+            combined_onnx_path = self.export_combined_onnx_pipeline(
+                scaler_onnx_path="models/scaler.onnx",
+                model_onnx_path="models/xgb_rul_model.onnx",
+                output_onnx_path="models/full_rul_pipeline.onnx"
+            )
 
             # Step 5: Model Evaluation
             logger.info(">>> Stage 5: Model Evaluation Started <<<")
             evaluation = ModelEvaluation()
-            metrics = evaluation.initiate_model_evaluation(model_path, transformed_test_path)
+            metrics = evaluation.initiate_model_evaluation(combined_onnx_path, transformed_test_path)
             logger.info(f"Model Evaluation Finished. Final Metrics: {metrics}")
 
             logger.info("=" * 50)
