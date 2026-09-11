@@ -2,8 +2,8 @@ import os
 import pytest
 import pandas as pd
 import numpy as np
-import joblib
 import json
+import onnxruntime as ort
 from src.components.data_validation import DataValidation
 from src.components.data_transformation import DataTransformation
 
@@ -16,7 +16,7 @@ def sample_raw_data(tmp_path):
         'unit_number': [1, 1, 1, 2, 2, 2],
         'time_in_cycles': [1, 2, 3, 1, 2, 3],
         'setting_1': [0.0007, 0.0001, -0.0003, 0.0010, 0.0005, -0.0002],
-        'setting_2': [0.0000, 0.0002, -0.0001, 0.0001, -0.0003, 0.0004],
+        'setting_2': [0.0000, 0.0002, -0.0001, 0.0010, -0.0003, 0.0004],
         'setting_3': [100.0, 100.0, 100.0, 100.0, 100.0, 100.0],
     }
     
@@ -43,7 +43,7 @@ def test_data_validation(sample_raw_data):
     assert os.path.exists(validator.validation_config.status_file_path)
 
 def test_data_transformation_pipeline(sample_raw_data):
-    """اختبار كامل لعملية تحويل البيانات، حساب الـ RUL، هندسة الخصائص، وحفظ الـ Scaler"""
+    """اختبار كامل لعملية تحويل البيانات، حساب الـ RUL، هندسة الخصائص، وحفظ الـ ONNX Pipeline"""
     train_path, test_path = sample_raw_data
     
     transformer = DataTransformation()
@@ -67,6 +67,10 @@ def test_data_transformation_pipeline(sample_raw_data):
     assert any(col.endswith('_roll_mean') for col in transformed_df.columns)
     assert any(col.endswith('_lag_1') for col in transformed_df.columns)
     
-    # 5. التأكد من عمل الـ Scaler بنجاح
-    scaler = joblib.load(res_scaler)
-    assert scaler is not None
+    # 5. التأكد من تحميل ملف الـ ONNX Pipeline المدمج بنجاح وقابليته للتشغيل
+    assert os.path.getsize(res_scaler) > 0, "ملف الـ ONNX فارغ!"
+    
+    # التحقق من إمكانية تحميل الـ ONNX Pipeline بـ ONNX Runtime
+    session = ort.InferenceSession(res_scaler)
+    assert session is not None
+    assert len(session.get_inputs()) > 0
