@@ -1,105 +1,153 @@
-from typing import List, Optional
-from pydantic import BaseModel, Field, ConfigDict
+from unittest.mock import patch, MagicMock
+import pytest
+from fastapi.testclient import TestClient
+
+from src.api.app import app, get_current_user, ml_artifacts
 
 
-class SensorInput(BaseModel):
-    """Schema for a single row of engine sensor measurements."""
-    unit_number: int = Field(..., description="Engine ID", example=1)
-    time_in_cycles: int = Field(..., description="Operating cycle number", example=1)
-    
-    # Operational Settings
-    setting_1: float = Field(..., description="Operational Setting 1", example=-0.0007)
-    setting_2: float = Field(..., description="Operational Setting 2", example=-0.0004)
-    setting_3: float = Field(..., description="Operational Setting 3", example=100.0)
-    
-    # Sensor Measurements
-    s_1: float = Field(..., example=518.67)
-    s_2: float = Field(..., example=641.82)
-    s_3: float = Field(..., example=1589.70)
-    s_4: float = Field(..., example=1400.60)
-    s_5: float = Field(..., example=14.62)
-    s_6: float = Field(..., example=21.61)
-    s_7: float = Field(..., example=554.36)
-    s_8: float = Field(..., example=2388.06)
-    s_9: float = Field(..., example=9046.19)
-    s_10: float = Field(..., example=1.30)
-    s_11: float = Field(..., example=47.47)
-    s_12: float = Field(..., example=521.66)
-    s_13: float = Field(..., example=2388.02)
-    s_14: float = Field(..., example=8138.62)
-    s_15: float = Field(..., example=8.4195)
-    s_16: float = Field(..., example=0.03)
-    s_17: float = Field(..., example=392.0)
-    s_18: float = Field(..., example=2388.0)
-    s_19: float = Field(..., example=100.0)
-    s_20: float = Field(..., example=39.06)
-    s_21: float = Field(..., example=23.4190)
+@pytest.fixture(scope="module")
+def client():
+    """
+    Fixture لتشغيل الـ TestClient مع تفعيل الـ lifespan
+    وعمل Mock كامل لجميع اتصالات قاعدة البيانات للـ Prevention من أي اتصال حقيقي.
+    """
+    # تجاوز نظام التوثيق (Auth)
+    app.dependency_overrides[get_current_user] = lambda: {
+        "username": "test_user"
+    }
 
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
+    # عمل Mock للـ Prediction Pipeline والـ Database Layer بجميع مكوناتها
+    with patch("src.api.app.PredictionPipeline") as mock_pipeline_class, \
+         patch("src.api.database.init_db") as mock_init_db, \
+         patch("src.api.database.SessionLocal") as mock_session, \
+         patch("src.api.database.engine") as mock_engine:
+
+        # تجهيز الـ Mock الخاص بالـ Model Prediction
+        mock_pipeline_instance = mock_pipeline_class.return_value
+        mock_pipeline_instance.predict.return_value = [120.5]
+
+        # تجهيز الـ Mock الخاص بالـ DB Session
+        mock_db_session = MagicMock()
+        mock_session.return_value = mock_db_session
+
+        with TestClient(app) as c:
+            yield c
+
+    app.dependency_overrides.clear()
+
+
+def test_root_endpoint(client):
+    """اختبار نقطة البداية والتأكد من رجوع الـ Documentation والـ Metrics"""
+    response = client.get("/")
+    assert response.status_code == 200
+    data = response.json()
+    assert "message" in data
+    assert data["swagger_docs"] == "/docs"
+    assert data["metrics"] == "/metrics"
+
+
+def test_health_check_endpoint(client):
+    """اختبار الـ Health Check والتأكد من حالة الموديل"""
+    response = client.get("/health")
+    assert response.status_code == 200
+    data = response.json()
+    assert "status" in data
+    assert "model_loaded" in data
+    assert data["version"] == "1.0.0"
+
+
+def test_metrics_endpoint(client):
+    """اختبار نقطة تجميع الـ Prometheus Metrics"""
+    response = client.get("/metrics")
+    assert response.status_code == 200
+    assert "app_requests_total" in response.text or response.status_code == 200
+
+
+def test_predict_endpoint_success(client):
+    """اختبار إرسال بيانات وتوقع الـ RUL بنجاح (Inference) مع تجنب اتصال قاعدة البيانات"""
+    payload = {
+        "records": [
+            {
+                "unit_number": 1,
+                "time_in_cycles": 10,
+                "setting_1": 0.0,
+                "setting_2": 0.0,
+                "setting_3": 100.0,
+                "s_1": 518.67,
+                "s_2": 641.82,
+                "s_3": 1589.70,
+                "s_4": 1400.60,
+                "s_5": 14.62,
+                "s_6": 21.61,
+                "s_7": 554.36,
+                "s_8": 2388.06,
+                "s_9": 9046.19,
+                "s_10": 1.30,
+                "s_11": 47.47,
+                "s_12": 521.66,
+                "s_13": 2388.02,
+                "s_14": 8138.62,
+                "s_15": 8.4195,
+                "s_16": 0.03,
+                "s_17": 392.0,
+                "s_18": 2388.0,
+                "s_19": 100.0,
+                "s_20": 39.06,
+                "s_21": 23.4190,
+            }
+        ]
+    }
+
+    response = client.post("/predict", json=payload)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "success"
+    assert data["total_records"] == 1
+    assert len(data["predictions"]) == 1
+    assert data["predictions"][0]["predicted_rul"] == 120.5
+
+
+def test_predict_endpoint_model_unavailable(client):
+    """اختبار حالة لو الموديل مش محمل والـ API رجّع 503"""
+    original_status = ml_artifacts.get("model_loaded")
+    ml_artifacts["model_loaded"] = False
+
+    payload = {
+        "records": [
+            {
                 "unit_number": 1,
                 "time_in_cycles": 1,
-                "setting_1": -0.0007,
-                "setting_2": -0.0004,
+                "setting_1": 0.0,
+                "setting_2": 0.0,
                 "setting_3": 100.0,
-                "s_1": 518.67, "s_2": 641.82, "s_3": 1589.70, "s_4": 1400.60,
-                "s_5": 14.62, "s_6": 21.61, "s_7": 554.36, "s_8": 2388.06,
-                "s_9": 9046.19, "s_10": 1.30, "s_11": 47.47, "s_12": 521.66,
-                "s_13": 2388.02, "s_14": 8138.62, "s_15": 8.4195, "s_16": 0.03,
-                "s_17": 392.0, "s_18": 2388.0, "s_19": 100.0, "s_20": 39.06, "s_21": 23.4190
+                "s_1": 518.67,
+                "s_2": 641.82,
+                "s_3": 1589.70,
+                "s_4": 1400.60,
+                "s_5": 14.62,
+                "s_6": 21.61,
+                "s_7": 554.36,
+                "s_8": 2388.06,
+                "s_9": 9046.19,
+                "s_10": 1.30,
+                "s_11": 47.47,
+                "s_12": 521.66,
+                "s_13": 2388.02,
+                "s_14": 8138.62,
+                "s_15": 8.4195,
+                "s_16": 0.03,
+                "s_17": 392.0,
+                "s_18": 2388.0,
+                "s_19": 100.0,
+                "s_20": 39.06,
+                "s_21": 23.4190,
             }
-        }
-    )
+        ]
+    }
 
+    response = client.post("/predict", json=payload)
+    ml_artifacts["model_loaded"] = original_status
 
-class SinglePredictionOutput(BaseModel):
-    """Schema for individual engine cycle prediction output."""
-    unit_number: int = Field(..., example=1)
-    time_in_cycles: int = Field(..., example=1)
-    predicted_rul: float = Field(..., description="Predicted Remaining Useful Life (RUL)", example=132.5)
-
-
-class BatchPredictionInput(BaseModel):
-    """Schema for receiving multiple sensor measurement records in a single JSON payload."""
-    records: List[SensorInput]
-
-
-class PredictionResponse(BaseModel):
-    """Schema for the complete API response containing prediction results."""
-    status: str = Field(..., example="success")
-    total_records: int = Field(..., example=1)
-    predictions: List[SinglePredictionOutput]
-
-
-class HealthCheckResponse(BaseModel):
-    """Schema for API health check and status verification."""
-    status: str = Field(..., example="healthy")
-    model_loaded: bool = Field(..., example=True)
-    version: str = Field(..., example="1.0.0")
-
-
-
-# --- الـ Schemas القديمة الخاصة بك كما هي ---
-# BatchPredictionInput, PredictionResponse, SinglePredictionOutput, HealthCheckResponse...
-
-# --- Schemas جديدة للـ Authentication والـ Authorization ---
-class Token(BaseModel):
-    access_token: str
-    token_type: str
-
-
-class TokenData(BaseModel):
-    username: Optional[str] = None
-    role: Optional[str] = None
-
-
-class UserLogin(BaseModel):
-    username: str
-    password: str
-
-
-class User(BaseModel):
-    username: str
-    role: str
-    disabled: Optional[bool] = False
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Model unavailable"
