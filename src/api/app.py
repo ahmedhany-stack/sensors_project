@@ -214,7 +214,6 @@ async def check_rate_limit_and_maintenance(client_ip: str, limit: int = 60, wind
     redis_client: aioredis.Redis = ml_artifacts.get("redis")
     if not redis_client:
         return
-
     # 1. فحص الصيانة أولاً فوراً
     is_maintenance = await redis_client.get("app:maintenance")
     if is_maintenance is not None:
@@ -362,7 +361,7 @@ async def predict_rul(
 # ------------------------------------------------------------------------------
 
 @app.get("/", tags=["Health"])
-async def root():
+async def root(    current_user: TokenData = Depends(get_current_user)):
     """Root endpoint to verify API availability and docs links."""
     return {
         "message": "Predictive Maintenance API is running smoothly.",
