@@ -11,14 +11,14 @@ jobs:
     name: Code Quality & Unit Tests
     runs-on: ubuntu-latest
 
-    # تشغيل حاوية PostgreSQL كـ Service لتلبية متطلبات الـ Integration Tests
+    # تشغيل حاوية PostgreSQL تحتوي على داتابيز rul_db المطلوبة للتطبيق
     services:
       postgres:
         image: postgres:13
         env:
-          POSTGRES_USER: airflow
-          POSTGRES_PASSWORD: airflow
-          POSTGRES_DB: airflow
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgrespassword
+          POSTGRES_DB: rul_db
         ports:
           - 5433:5432
         options: >-
@@ -48,6 +48,14 @@ jobs:
           ruff check . --select=E9,F63,F7,F82
 
       - name: Run Unit Tests with Pytest
+        env:
+          # تمرير متغيرات البيئة ورابط الاتصال بالـ Postgres للـ Tests
+          DATABASE_URL: postgresql://postgres:postgrespassword@localhost:5433/rul_db
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgrespassword
+          POSTGRES_DB: rul_db
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5433
         run: |
           if [ -d "tests" ]; then pytest tests/; else echo "No tests directory found, skipping."; fi
 
