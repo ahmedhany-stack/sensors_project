@@ -42,7 +42,7 @@ def test_root_endpoint(client):
     response = client.get("/")
     assert response.status_code == 200
     data = response.json()
-    assert "message" in data
+    assert data["message"] == "Predictive Maintenance API is running smoothly."
     assert data["swagger_docs"] == "/docs"
     assert data["metrics"] == "/metrics"
 
