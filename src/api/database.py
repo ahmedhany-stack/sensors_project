@@ -3,8 +3,7 @@ import datetime
 from dotenv import load_dotenv
 import yaml
 from sqlalchemy import create_engine, Column, Integer, Float, DateTime, JSON
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import declarative_base, sessionmaker
 
 # تحميل المتغيرات من ملف .env
 load_dotenv()
@@ -13,7 +12,7 @@ load_dotenv()
 def load_config(config_path: str = "configs/config.yaml") -> dict:
     if os.path.exists(config_path):
         with open(config_path, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f)
+            return yaml.safe_load(f) or {}
     return {}
 
 
@@ -24,7 +23,7 @@ defaults = db_cfg.get("defaults", {})
 tables = db_cfg.get("table_names", {})
 db_keys = db_cfg.get("keys", {})
 
-# جلب بيانات الاتصال (المتغيرات الحساسة من .env مع الـ Fallback من config.yaml)
+# جلب بيانات الاتصال
 db_user = os.getenv("DB_USER", defaults.get("user", "airflow"))
 db_password = os.getenv("DB_PASSWORD", "airflow")
 db_host = os.getenv("DB_HOST", defaults.get("host", "127.0.0.1"))
@@ -33,8 +32,6 @@ db_name = os.getenv("DB_NAME", defaults.get("name", "rul_db"))
 
 # بناء رابط الاتصال
 DATABASE_URL = f"postgresql+psycopg2://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}"
-
-print(f"--> Connecting to Database URL: {DATABASE_URL}")
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -52,8 +49,11 @@ class PredictionLog(Base):
     predicted_rul = Column(Float)
 
 
-# إنشاء الجدول تلقائياً إن لم يكن موجوداً
-Base.metadata.create_all(bind=engine)
+# ✅ دالة صريحة لإنشاء الجداول - تتنفذ فقط عند الاستدعاء وليس عند الـ Import
+def init_db():
+    """تُستدعى هذه الدالة عند بدء تشغيل التطبيق (Startup) لإنشاء الجداول"""
+    print(f"--> Connecting to Database URL: {DATABASE_URL}")
+    Base.metadata.create_all(bind=engine)
 
 
 def save_predictions_to_db(records_data: list, raw_predictions: list):

@@ -12,12 +12,12 @@ import redis.asyncio as aioredis
 from fastapi import FastAPI, HTTPException, Depends, status, Request, BackgroundTasks
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
 from starlette.responses import Response
 
-from sqlalchemy import create_engine, Column, Integer, Float, DateTime, JSON
-from sqlalchemy.orm import declarative_base, sessionmaker, Session
+# ✅ استيراد عناصر قاعدة البيانات من database.py لمنع التكرار ولضمان عزل الاتصال
+from src.api.database import init_db, engine, Base, save_predictions_to_db
 
 # ------------------------------------------------------------------------------
 # Setup Logging
@@ -29,28 +29,7 @@ logger = logging.getLogger("mlops_app")
 # Settings & Configurations
 # ------------------------------------------------------------------------------
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+psycopg2://airflow:airflow@127.0.0.1:5433/rul_db")
-CACHE_EXPIRATION_SECONDS = 3600  # ساعة واحدة
-
-# ------------------------------------------------------------------------------
-# Database Setup (SQLAlchemy & PostgreSQL)
-# ------------------------------------------------------------------------------
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
-
-class PredictionLog(Base):
-    __tablename__ = "prediction_logs"
-
-    id = Column(Integer, primary_key=True, index=True)
-    unit_number = Column(Integer, nullable=False)
-    time_in_cycles = Column(Integer, nullable=False)
-    features = Column(JSON, nullable=True)
-    predicted_rul = Column(Float, nullable=False)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
-
-# إنشاء الجدول أوتوماتيكياً في حالة عدم وجوده
-Base.metadata.create_all(bind=engine)
+CACHE_EXPIRATION_SECONDS = 3600
 
 # ------------------------------------------------------------------------------
 # Prometheus Metrics
@@ -66,18 +45,23 @@ PREDICTED_RUL_GAUGE = Gauge("predicted_rul_value", "Predicted RUL value", ["unit
 # ------------------------------------------------------------------------------
 class PredictionPipeline:
     def predict(self, df: pd.DataFrame):
-        # محاكاة للتنبؤ بنفس عدد المدخلات
         return [100.5 - i for i in range(len(df))]
 
 ml_artifacts = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: إعداد الموديل والـ Redis
-    logger.info("Initializing ML Artifacts and Redis Connection...")
+    # Startup: إعداد الموديل والـ Redis والداتابيز
+    logger.info("Initializing ML Artifacts, Database and Redis Connection...")
     ml_artifacts["pipeline"] = PredictionPipeline()
     ml_artifacts["model_loaded"] = True
     
+    # ✅ استدعاء إنشاء الجداول عند قومة السيرفر فقط وليس عند الـ Import
+    try:
+        init_db()
+    except Exception as db_err:
+        logger.error(f"Failed to initialize Database: {db_err}")
+
     try:
         redis = aioredis.from_url(REDIS_URL, decode_responses=False)
         await redis.ping()
@@ -173,39 +157,11 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> TokenData:
     return TokenData(username="admin")
 
 # ------------------------------------------------------------------------------
-# Helper Functions & Database Persistence
+# Helper Functions
 # ------------------------------------------------------------------------------
 def generate_cache_key(input_data: list) -> str:
     serialized = json.dumps(input_data, sort_keys=True)
     return f"cache:predict:{hashlib.md5(serialized.encode()).hexdigest()}"
-
-def save_predictions_to_db(records_data: list, raw_predictions: list):
-    """دالة خلفية حقيقية لتخزين المدخلات والتوقعات في قاعدة البيانات PostgreSQL"""
-    db: Session = SessionLocal()
-    try:
-        logs = []
-        for rec, pred in zip(records_data, raw_predictions):
-            rec_dict = rec.dict() if hasattr(rec, "dict") else rec
-
-            unit_num = rec_dict.get("unit_number") or rec_dict.get("unit_id") or 0
-            cycles = rec_dict.get("time_in_cycles") or rec_dict.get("cycle") or 0
-
-            log_item = PredictionLog(
-                unit_number=int(unit_num),
-                time_in_cycles=int(cycles),
-                features=rec_dict,
-                predicted_rul=float(pred)
-            )
-            logs.append(log_item)
-
-        db.add_all(logs)
-        db.commit()
-        logger.info(f"Successfully saved {len(logs)} records to PostgreSQL database.")
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Failed to log predictions to PostgreSQL: {e}")
-    finally:
-        db.close()
 
 # ------------------------------------------------------------------------------
 # Rate Limit & Maintenance Verification
@@ -214,7 +170,7 @@ async def check_rate_limit_and_maintenance(client_ip: str, limit: int = 60, wind
     redis_client: aioredis.Redis = ml_artifacts.get("redis")
     if not redis_client:
         return
-    # 1. فحص الصيانة أولاً فوراً
+
     is_maintenance = await redis_client.get("app:maintenance")
     if is_maintenance is not None:
         val = is_maintenance.decode('utf-8') if isinstance(is_maintenance, bytes) else str(is_maintenance)
@@ -225,7 +181,6 @@ async def check_rate_limit_and_maintenance(client_ip: str, limit: int = 60, wind
                 detail="System is currently under maintenance. Please try again later."
             )
 
-    # 2. فحص الـ Rate Limiting
     rate_key = f"rate_limit:{client_ip}"
     current_requests = await redis_client.incr(rate_key)
     if current_requests == 1:
@@ -241,7 +196,6 @@ async def check_rate_limit_and_maintenance(client_ip: str, limit: int = 60, wind
 # ------------------------------------------------------------------------------
 # API Endpoints
 # ------------------------------------------------------------------------------
-
 @app.post("/token", tags=["Auth"])
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
     return {"access_token": "fake-token", "token_type": "bearer"}
@@ -260,12 +214,8 @@ async def predict_rul(
     start_time = time.time()
     client_ip = request.client.host if request.client else "127.0.0.1"
 
-    # =========================================================================
-    # 1. فحص وضع الصيانة والـ Rate Limiting أول حاجة
-    # =========================================================================
     await check_rate_limit_and_maintenance(client_ip)
 
-    # فحص توفر الموديل
     if not ml_artifacts.get("model_loaded", False):
         REQUEST_COUNT.labels(endpoint="/predict", status_code="503").inc()
         raise HTTPException(status_code=503, detail="Model unavailable")
@@ -279,7 +229,6 @@ async def predict_rul(
         cache_key = generate_cache_key(input_data)
         cached_predictions = None
 
-        # 2. القراءة من الـ Cache
         if redis_client:
             try:
                 cached_data = await redis_client.get(cache_key)
@@ -290,7 +239,6 @@ async def predict_rul(
             except Exception as cache_err:
                 logger.warning(f"Error reading from Redis cache: {cache_err}")
 
-        # 3. التنبؤ في حالة الـ Cache Miss
         if cached_predictions is None:
             if redis_client:
                 CACHE_HITS.labels(status="miss").inc()
@@ -301,7 +249,6 @@ async def predict_rul(
             
             raw_preds_list = raw_predictions.tolist() if hasattr(raw_predictions, 'tolist') else list(raw_predictions)
 
-            # إضافة عملية الحفظ الفعلية لقاعدة البيانات في الخلفية
             background_tasks.add_task(save_predictions_to_db, input_data, raw_preds_list)
 
             predictions = []
@@ -312,7 +259,6 @@ async def predict_rul(
                     "predicted_rul": round(float(pred), 2)
                 })
 
-            # حفظ النتيجة في الـ Cache
             if redis_client:
                 try:
                     await redis_client.setex(
@@ -325,15 +271,10 @@ async def predict_rul(
         else:
             predictions = cached_predictions
 
-        # تحديث مِتَرك Prometheus
         for item in predictions:
             PREDICTED_RUL_GAUGE.labels(unit_number=str(item["unit_number"])).set(item["predicted_rul"])
 
         output_predictions = [SinglePredictionOutput(**pred) for pred in predictions]
-
-        # =========================================================================
-        # تسجيل زيادة الـ Request بغض النظر عن كونه جاء من الـ Cache أم لا
-        # =========================================================================
         REQUEST_COUNT.labels(endpoint="/predict", status_code="200").inc()
 
         return PredictionResponse(
@@ -342,9 +283,6 @@ async def predict_rul(
             predictions=output_predictions
         )
 
-    # =========================================================================
-    # حماية استثناءات الـ HTTP من التحول لـ Internal Server Error (500)
-    # =========================================================================
     except HTTPException:
         raise
     except Exception as e:
@@ -359,10 +297,8 @@ async def predict_rul(
 # ------------------------------------------------------------------------------
 # Health & Root Endpoints
 # ------------------------------------------------------------------------------
-
 @app.get("/", tags=["Health"])
-async def root(    current_user: TokenData = Depends(get_current_user)):
-    """Root endpoint to verify API availability and docs links."""
+async def root(current_user: TokenData = Depends(get_current_user)):
     return {
         "message": "Predictive Maintenance API is running smoothly.",
         "swagger_docs": "/docs",
@@ -371,10 +307,8 @@ async def root(    current_user: TokenData = Depends(get_current_user)):
 
 @app.get("/health", tags=["Health"])
 async def health_check():
-    """Health check endpoint required for CI/CD tests and load balancers."""
     is_model_loaded = ml_artifacts.get("model_loaded", False)
     
-    # 1. فحص الاتصال بـ Redis
     redis_status = "healthy"
     redis_client = ml_artifacts.get("redis")
     if redis_client:
@@ -385,15 +319,13 @@ async def health_check():
     else:
         redis_status = "unreachable"
 
-    # 2. فحص الاتصال بـ PostgreSQL
     db_status = "healthy"
     try:
         with engine.connect() as connection:
-            connection.execute(Base.metadata.schema)
+            pass
     except Exception:
         db_status = "unhealthy"
 
-    # تحديد الكود العام للـ Status
     overall_status = "healthy" if (is_model_loaded and db_status == "healthy") else "degraded"
 
     return {
