@@ -95,33 +95,47 @@ class PredictionPipeline:
             raise CustomException(e, sys)
 
     def _preprocess_input_data(self, df: pd.DataFrame) -> np.ndarray:
-        """تطبيق Feature Engineering فقط وإرجاع NumPy Array جاهزة للـ Full ONNX Graph"""
+        """تطبيق Feature Engineering بشكل متجه (Vectorized) فائق السرعة وإرجاع NumPy Array جاهزة"""
         try:
             df = df.copy()
 
             # 1. إزالة الأعمدة الثابتة
-            df.drop(columns=[c for c in self.constant_cols if c in df.columns], inplace=True)
+            cols_to_drop = [c for c in self.constant_cols if c in df.columns]
+            if cols_to_drop:
+                df.drop(columns=cols_to_drop, inplace=True)
 
-            # 2. تطبيق الـ Rolling والـ Lag بناءً على معاملات الـ Config
+            # 2. تطبيق الـ Rolling والـ Lag باستخدام Vectorization بدون lambdas لتسريع الأداء
             sensor_cols = [c for c in df.columns if c.startswith('s_') or c.startswith('setting_')]
             
-            for col in sensor_cols:
-                df[f'{col}_roll_mean'] = df.groupby('unit_number')[col].transform(
-                    lambda x: x.rolling(self.rolling_window, min_periods=self.rolling_min_periods).mean()
-                )
-                df[f'{col}_roll_std'] = df.groupby('unit_number')[col].transform(
-                    lambda x: x.rolling(self.rolling_window, min_periods=self.rolling_min_periods).std()
-                ).fillna(0)
-                df[f'{col}_lag_{self.lag_step}'] = df.groupby('unit_number')[col].shift(self.lag_step)
-                df[f'{col}_lag_{self.lag_step}'] = df.groupby('unit_number')[f'{col}_lag_{self.lag_step}'].bfill()
+            if sensor_cols:
+                grouped = df.groupby('unit_number')[sensor_cols]
+                
+                roll_mean_df = grouped.rolling(window=self.rolling_window, min_periods=self.rolling_min_periods).mean()
+                roll_std_df = grouped.rolling(window=self.rolling_window, min_periods=self.rolling_min_periods).std().fillna(0)
+                lag_df = grouped.shift(self.lag_step)
 
-            # 3. التأكد من تطابق الأعمدة مع features.json
-            missing_cols = set(self.feature_names) - set(df.columns)
-            if missing_cols:
-                raise ValueError(f"Missing required feature columns in input data: {missing_cols}")
+                if isinstance(roll_mean_df.index, pd.MultiIndex):
+                    roll_mean_df = roll_mean_df.reset_index(level=0, drop=True)
+                if isinstance(roll_std_df.index, pd.MultiIndex):
+                    roll_std_df = roll_std_df.reset_index(level=0, drop=True)
+                if isinstance(lag_df.index, pd.MultiIndex):
+                    lag_df = lag_df.reset_index(level=0, drop=True)
+
+                for col in sensor_cols:
+                    df[f'{col}_roll_mean'] = roll_mean_df[col]
+                    df[f'{col}_roll_std'] = roll_std_df[col]
+                    
+                    lag_col_name = f'{col}_lag_{self.lag_step}'
+                    df[lag_col_name] = lag_df[col]
+                
+                lag_cols_to_fill = [f'{col}_lag_{self.lag_step}' for col in sensor_cols]
+                df[lag_cols_to_fill] = df.groupby('unit_number')[lag_cols_to_fill].bfill()
+
+            # 3. التأكد من تطابق الأعمدة مع features.json باستخدام reindex السريعة
+            df_model_input = df.reindex(columns=self.feature_names, fill_value=0.0)
 
             # ترتيب الأعمدة وتحويلها إلى float32
-            X_raw = df[self.feature_names].values.astype(np.float32)
+            X_raw = df_model_input.values.astype(np.float32)
 
             return X_raw
 

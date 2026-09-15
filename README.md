@@ -1,150 +1,185 @@
-🚀 Enterprise-Grade RUL Prediction & MLOps Automated Pipeline
+🚀 Production-Grade MLOps Engine: Industrial Remaining Useful Life (RUL) Prediction System
 
-    A production-ready, end-to-end MLOps pipeline designed for Remaining Useful Life (RUL) prediction of industrial engines (CMAPSS dataset). Built to handle real-time inference, automated data drift detection, dynamic model retraining, and live alerting.
+An enterprise-ready, end-to-end MLOps platform built for predictive maintenance and Remaining Useful Life (RUL) estimation of high-value industrial assets (NASA C-MAPSS dataset).
 
-🏗️ System Architecture & Workflow
+This platform bridges the gap between offline Machine Learning models and production-grade software engineering. It incorporates real-time asynchronous inference, Triton Inference Server backend integration via gRPC, ONNX runtime optimization, distributed caching and feature store management via Redis, automated data drift detection, closed-loop model retraining (Continuous Training), real-time monitoring, and instant alert routing via Telegram.
+🏛️ System Architecture & Data Flow
 Plaintext
 
-[ Industrial Engines / Sensors ] 
-             │
-             ▼ (REST API - POST)
-     [ FastAPI Service ] ──> Logs Predictions ──> [ PostgreSQL (`rul_db`) ]
-             │                                          │
-             │ (Async Log Capture)                      │ (Data Window: Last 24 Hours)
-             ▼                                          ▼
-   [ Streamlit Dashboard ] <───────────────── [ Apache Airflow Orchestration ]
-     (Live RUL, Alerts & Metrics)                       │
-                                                        ▼
-                                           [ Evidently AI Drift Analysis ]
-                                                        │
-                                          ┌─────────────┴─────────────┐
-                                          ▼ (Drift Detected: True)    ▼ (No Drift)
-                               [ Automated Retraining ]       [ Pipeline Success ]
-                                          │
-                                          ▼
-                               [ Telegram Alert Notification ]
+                        ┌─────────────────────────────────────────┐
+                        │    Industrial Sensors & Devices         │
+                        └────────────────────┬────────────────────┘
+                                             │ (Batch/Stream REST Requests)
+                                             ▼
+┌─────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                  FastAPI Microservice Engine                                            │
+│                                                                                                         │
+│  ┌──────────────────────┐     Cache Miss     ┌─────────────────────┐     gRPC Request     ┌───────────┐ │
+│  │ Rate Limit & Auth    ├───────────────────►│ FastAPI Application ├─────────────────►│   Triton  │ │
+│  └──────────┬───────────┘                    └──────────┬──────────┘                  │ Inference │ │
+└─────────────┼───────────────────────────────────────────┼────────────────────────────►│  Server   │ │
+              │                                           │ Async Bulk DB Logging       │  (ONNX)   │ │
+              │                                           ▼                             └─────┬─────┘ │
+              │                               ┌──────────────────────────────┐                │       │
+              │                               │ PostgreSQL (`rul_db`)        │◄───────────────┘       │
+              │                               │ - Bulk Prediction Persistence│                        │
+              │ (Telemetry Metrics)           └──────────────┬───────────────┘                        │
+              ▼                                              │                                        │
+┌─────────────────────────┐                   ┌──────────────┴───────────────┐                        │
+│ Prometheus & Grafana    │                   │ Apache Airflow Orchestration │                        │
+└─────────────────────────┘                   └──────────────┬───────────────┘                        │
+                                                             ▼                                        │
+                                              ┌──────────────────────────────┐                        │
+                                              │ Evidently AI Drift Engine    │                        │
+                                              └──────────────┬───────────────┘                        │
+                                                             │                                        │
+                                              ┌──────────────┴───────────────┐                        │
+                                              ▼ (Drift Identified)           ▼ (No Drift)             │
+                               ┌──────────────────────────────┐     ┌─────────────────┐               │
+                               │ Dynamic Retraining Pipeline  │     │ Pipeline Status │               │
+                               │ & MLflow Artifact Registry   │     │ OK              │               │
+                               └──────────────┬───────────────┘     └─────────────────┘               │
+                                              │                                                       │
+                                              ▼                                                       │
+                               ┌──────────────────────────────┐     ┌─────────────────┐               │
+                               │ Telegram Alert Notification  ├─────►│ Streamlit Live  │               │
+                               │ (Instant Telemetry Dispatch) │     │ Observability   │               │
+                               └──────────────────────────────┘     └─────────────────┘               │
 
-🛠️ Tech Stack & Ecosystem
+🌟 Key Engineering & MLOps Highlights
+⚡ 1. High-Performance Triton, ONNX & Redis Feature Store Integration
 
-    Core & Pipeline: Python, Pandas, Scikit-XGBoost / ML Models.
+    Sub-Millisecond gRPC Inference: Replaced local model execution with Triton Inference Server backed by optimized ONNX Runtime (.onnx models). Communication via gRPC (HTTP/2) completely bypasses Python's GIL restrictions, maximizing inference throughput.
 
-    API & Serving: FastAPI, Uvicorn, Pydantic.
+    Triton Dynamic Batcher: Configured automated request batching at the C++ server level (max_batch_size and max_queue_delay), optimizing hardware utilization under high industrial loads.
 
-    Database & Storage: PostgreSQL (rul_db), DVC (Data Version Control).
+    Async Redis Feature Store (RedisFeatureStore): Integrated real-time sliding window and lag feature calculation directly backed by Redis, running fully asynchronously (await) inside FastAPI to prevent any event-loop blocking.
 
-    Orchestration & Automation: Apache Airflow (DAGs, TaskFlow API).
+    Distributed Caching: Intercepts duplicated sensor signatures to eliminate redundant compute cycles and minimize response latencies.
 
-    Monitoring & Observability: Evidently AI (Data Drift Detection), Prometheus, Grafana.
+💾 2. Asynchronous Bulk Persistence
 
-    Frontend / Dashboard: Streamlit (Real-time monitoring, alerts, and RUL degradation curves).
+    Non-Blocking Database Logging: Designed high-throughput asynchronous background queue workers (queue_worker.py) to batch and flush telemetry and inference records (handling heavy batches of 100 to 500+ items concurrently) to PostgreSQL.
 
-    Alerting System: Telegram Bot API (Automated critical failure and retraining alerts).
+🔄 3. Continuous Monitoring & Automated Training (Airflow + Evidently AI)
 
-    Testing & Quality Assurance: Pytest (Unit tests for data processing/models + Integration tests for API).
+    Automated Data Drift Analysis: Scheduled Apache Airflow DAGs continuously aggregate production inference logs over sliding windows, running Kolmogorov-Smirnov statistical distribution tests using Evidently AI against baseline training datasets.
 
-    Containerization: Docker, Docker Compose, WSL2.
+    Closed-Loop Retraining (CT): Automatically triggers MLflow tracking, artifact versioning, and checkpoint deployment upon detecting distribution drift (dataset_drift = True).
 
-📂 Project Directory Structure
+📊 4. Observability, Security & Alerting (Prometheus, Grafana, Telegram)
+
+    Production Telemetry: Exposed Prometheus metrics tracking endpoint latency histograms, request throughput, error rates, and cache hits/misses, visualized on Grafana dashboards.
+
+    Instant Incident Dispatch: Automated Telegram bot notifications for system drift alerts and execution summaries.
+
+🛠️ Technology Stack
+Domain	Tools & Frameworks
+Core & Inference Engine	Python 3.10+, Triton Inference Server, ONNX Runtime, XGBoost, Pandas, NumPy
+API & Service Layer	FastAPI, Uvicorn, Pydantic, OAuth2 Security, gRPC (tritonclient), Redis
+Database & Caching	PostgreSQL, Redis, SQLAlchemy (ORM)
+Orchestration & Workflow	Apache Airflow (TaskFlow API)
+Experimentation & Tracking	MLflow, DVC (Data Version Control)
+Monitoring & Drift	Evidently AI, Prometheus, Grafana
+User Interface & Alerts	Streamlit, Telegram Bot API
+Quality & CI/CD / Orchestration	Pytest, GitHub Actions, Docker, Docker Compose, Kubernetes (In Progress)
+📂 Repository Structure
 Plaintext
 
 .
-├── airflow/                    # Airflow DAGs and orchestration scripts
+├── airflow/                    # Airflow DAGs & Automated Orchestration
 │   └── dags/
 │       └── rul_data_drift_dag.py
-├── api/                        # FastAPI application and routing
-│   ├── main.py
-│   └── schemas.py
-├── data/                       # Datasets (Raw, Processed, and DVC tracked)
-│   ├── raw/
-│   └── processed/
-├── monitoring/                 # Evidently AI configuration and drift detectors
-│   └── monitoring.py
-├── reports/                    # Generated JSON/HTML drift reports
-│   └── drift_report.json
-├── src/                        # Core machine learning pipelines & feature engineering
-│   ├── model.py
-│   └── preprocessing.py
-├── streamlit_app/              # Real-time monitoring UI dashboard
+├── api/                        # FastAPI Application Modules
+│   ├── app.py                  # Core Application & Endpoint Handlers
+│   ├── database.py             # Database Connection & Session Management
+│   └── queue_worker.py         # Asynchronous Background Queue Worker
+├── models/                     # Triton Model Repository
+│   └── engine_rul_model/
+│       ├── 1/
+│       │   └── full_rul_pipeline.onnx
+│       └── config.pbtxt        # Triton Dynamic Batcher & Config
+├── monitoring/                 # Drift Detection & Metrics Evaluators
+│   └── monitoring.py           # Evidently AI Analysis Configurations
+├── src/                        # ML Pipelines & Business Logic
+│   ├── components/
+│   │   └── data_transformation.py
+│   └── utils/
+│       └── feature_store.py    # Async Redis Feature Store Implementation
+├── streamlit_app/              # Interactive Real-Time Monitoring Dashboard
 │   └── app.py
-├── tests/                      # Comprehensive test suite
-│   ├── integration/
-│   │   └── test_api.py
-│   └── unit/
-│       ├── test_data.py
-│       └── test_model.py
-├── docker-compose.yml          # Full stack containerization
-├── Dockerfile
-├── requirements.txt
-└── README.md
+├── tests/                      # Testing Suite
+│   └── integration/
+│       └── test_api.py         # End-to-End API Integration Tests
+├── k8s/                        # Kubernetes Deployments, Services & ConfigMaps (WIP)
+├── docker-compose.yml          # Multi-Container Deployment Orchestration
+├── Dockerfile                  # Application Container Specification
+└── requirements.txt            # Python Dependencies
 
-🧠 Core Features & MLOps Highlights
+⚡ Quickstart Guide
+Prerequisites
 
-    Real-Time Inference API (FastAPI):
+    Docker and Docker Compose
 
-        Receives multi-sensor time-series engine readings.
+    Git
 
-        Computes RUL instantly and logs every request asynchronously into PostgreSQL.
-
-    Automated Continuous Monitoring (Apache Airflow + Evidently AI):
-
-        Configured DAGs inspect production prediction logs (e.g., sliding window of the last 24 hours).
-
-        Automatically benchmarks live data against the static reference dataset (train.csv).
-
-        Evaluates feature distribution shifts and dataset-level drift flags.
-
-    Closed-Loop Continuous Training (CT):
-
-        If dataset_drift = True is detected, Airflow dynamically triggers the automated training pipeline to ingest fresh data and update the model weights.
-
-    Instant Telemetry & Alerting (Telegram):
-
-        Automatically dispatches real-time Telegram alerts upon detecting critical drift metrics or successful model retraining completions.
-
-    Operational Intelligence Dashboard (Streamlit):
-
-        Displays engine status, active alerts, RUL degradation curves over time, and live data health metrics in a single interface.
-
-    Robust Testing Suite (Pytest):
-
-        Fully covered with unit tests for data preprocessing and model inference, alongside integration tests for the REST API endpoints.
-
-🚀 Getting Started & Installation
-1. Clone the Repository
+1. Clone Repository & Setup Environment
 Bash
 
-git clone https://github.com/ahmedhany-stack/sensors_project
-cd rul-mlops-pipeline
+git clone https://github.com/ahmedhany-stack/sensors_project.git
+cd sensors_project
 
-2. Environment Variables
-
-Create a .env file in the root directory based on .env.example:
+Create a .env configuration file in the project root:
 مقتطف الرمز
 
-POSTGRES_USER=your_user
-POSTGRES_PASSWORD=your_password
-POSTGRES_DB=rul_db
-TELEGRAM_BOT_TOKEN=your_telegram_token
-TELEGRAM_CHAT_ID=your_chat_id
+# Database Credentials
+DB_USER=airflow
+DB_PASSWORD=airflow
+DB_HOST=postgres
+DB_PORT=5432
+DB_NAME=rul_db
 
-3. Run with Docker Compose
+# Redis Configuration
+REDIS_URL=redis://redis:6379/0
+REDIS_HOST=redis
+REDIS_PORT=6379
 
-Bring up the entire stack (API, PostgreSQL, Airflow, and Streamlit) with a single command:
+# Internal Security
+INTERNAL_API_SECRET=super-secret-key
+
+# Alerting Credentials
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token
+TELEGRAM_CHAT_ID=your_telegram_chat_id
+
+2. Launch Entire Infrastructure with Docker Compose
+
+Spin up Triton Inference Server, FastAPI, PostgreSQL, Redis, Apache Airflow, Prometheus, Grafana, and Streamlit with a single command:
 Bash
 
-docker-compose up --build
+docker compose up --build -d
 
-4. Run Tests
+3. Verify System Services
+Service Name	Web Interface / Endpoint	Default URL
+FastAPI Documentation	Swagger UI	http://localhost:8000/docs
+Triton Inference Server	gRPC / HTTP	http://localhost:8001
+Streamlit Dashboard	Live Operations & Curves	http://localhost:8501
+Apache Airflow	DAG Orchestration Platform	http://localhost:8080
+Prometheus	Metric Aggregation Engine	http://localhost:9090
+Grafana	Live Monitoring Dashboard	http://localhost:3000
+☸️ What's Next? (Kubernetes & Cloud Native Migration)
 
-Verify the integrity of the system using pytest:
-Bash
+We are currently scaling this architecture to a Production Kubernetes Cluster setup:
 
-pytest tests/
+    Deployments & StatefulSets: Managing stateless FastAPI/Streamlit microservices alongside stateful PostgreSQL and Redis storage pods.
 
-📊 Dashboard Preview & Monitoring Loop
+    Services & Ingress: Exposing internal gRPC ports for Triton and handling external ingress traffic routing.
 
-    FastAPI Docs: http://localhost:8000/docs
+    ConfigMaps & Secrets: Secure environment variable and credential management across cloud pods.
 
-    Streamlit UI: http://localhost:8501
+👤 Author & Maintainer: Ahmed Hany Sallam (أحمد هاني سلام)
 
-    Airflow Webserver: http://localhost:8080
+    GitHub: @ahmedhany-stack
+
+    Role: Machine Learning & MLOps Engineer
+
+    Developed with a focus on enterprise architecture, low-latency gRPC inference, high-throughput asynchronous feature stores, and automated predictive maintenance.

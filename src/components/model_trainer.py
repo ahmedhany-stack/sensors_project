@@ -85,13 +85,13 @@ class ModelTrainer:
                 model.fit(X_train_values, y_train_values)
 
                 # -------------------------------------------------------------
-                # 1. تحويل موديل XGBoost إلى صيغة ONNX
+                # 1. تحويل موديل XGBoost إلى صيغة ONNX (مع تثبيت target_opset=15)
                 # -------------------------------------------------------------
                 logger.info("Converting XGBoost model to ONNX format...")
                 num_features = X_train.shape[1]
                 
                 initial_type = [('float_input', FloatTensorType([None, num_features]))]
-                onnx_model = convert_xgboost(model, initial_types=initial_type)
+                onnx_model = convert_xgboost(model, initial_types=initial_type, target_opset=15)
 
                 # -------------------------------------------------------------
                 # 2. حفظ ملف .onnx محلياً

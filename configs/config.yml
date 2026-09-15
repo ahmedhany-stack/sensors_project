@@ -29,9 +29,9 @@ data_transformation:
   paths:
     transformed_train: "data/features/transformed_train.csv"
     transformed_test: "data/features/transformed_test.csv"
-    output_onnx_path: "models/full_rul_pipeline.onnx"
-    scaler: "models/scaler.onnx"
-    features_json: "models/features.json"
+    output_onnx_path: "artifacts/full_rul_pipeline.onnx"
+    scaler: "artifacts/scaler.onnx"
+    features_json: "artifacts/features.json"
     y_column: "data/raw/RUL_FD001.txt"
   rul:
     clip_upper: 125
@@ -45,7 +45,7 @@ data_transformation:
 
 model_trainer:
   paths:
-    model_file: "models/xgb_rul_model.onnx"
+    model_file: "artifacts/xgb_rul_model.onnx"
   mlflow:
     tracking_uri: "http://127.0.0.1:5000"
     experiment_name: "RUL_Prediction"
@@ -60,7 +60,7 @@ model_trainer:
 
 model_evaluation:
   paths:
-    metrics_file: "models/metrics.json"
+    metrics_file: "artifacts/metrics.json"
   mlflow:
     run_name: "Model_Evaluation_ONNX"
   onnx:

@@ -65,6 +65,45 @@ services:
       start_period: 5s
     restart: always
 
+  triton:
+    image: nvcr.io/nvidia/tritonserver:23.10-py3
+    container_name: triton_server
+    ports:
+      - "9000:8000"
+      - "8001:8001"
+    volumes:
+      - ./models:/models
+    command: ["tritonserver", "--model-repository=/models"]
+    restart: always
+
+  fastapi:
+      build: .
+      container_name: fastapi_inference_app
+      ports:
+        - "8000:8000"
+      working_dir: /opt/airflow  # 👈 بنخلي مجلد الشغل الأساسي جوه هو مسار الأيرفلو اللي فيه ملفاتك
+      command: uvicorn src.api.app:app --host 0.0.0.0 --port 8000 --workers 6
+      environment:
+        - DB_HOST=postgres
+        - DB_PORT=5432
+        - REDIS_HOST=redis
+        - REDIS_PORT=6379
+        - TRITON_URL=triton:8001
+        - PYTHONPATH=/opt/airflow  # 👈 بنعرف بايثون إن المجلد الأساسي هو اللي فيه الـ src
+      volumes:
+        - .:/opt/airflow  # 👈 بيربط مشروعك المحلي كله جوه الكونتينر
+      depends_on:
+        postgres:
+          condition: service_healthy
+        redis:
+          condition: service_healthy
+        triton:
+          condition: service_started
+      entrypoint: ""
+      restart: always
+      env_file:
+        - .env
+
   airflow-webserver:
     <<: *airflow-common
     command: webserver

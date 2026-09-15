@@ -54,24 +54,42 @@ class DataTransformation:
         return df
 
     def _create_features(self, df: pd.DataFrame, constant_cols: list) -> pd.DataFrame:
-        """استخراج الـ Rolling و Lag Features بعد حذف الأعمدة الثابتة غير المؤثرة"""
+        """استخراج الـ Rolling و Lag Features بشكل متجه (Vectorized) فائق السرعة بدون lambdas"""
         cols_to_drop = [c for c in constant_cols if c in df.columns]
         if cols_to_drop:
             df.drop(columns=cols_to_drop, inplace=True)
         
         sensor_cols = [c for c in df.columns if c.startswith('s_') or c.startswith('setting_')]
         
+        if not sensor_cols:
+            return df
+
+        # استخدام groupby rolling مباشرة بدون lambda لتسريع الأداء أضعاف مضاعفة
+        grouped = df.groupby('unit_number')[sensor_cols]
+        
+        roll_mean_df = grouped.rolling(window=self.rolling_window, min_periods=self.rolling_min_periods).mean()
+        roll_std_df = grouped.rolling(window=self.rolling_window, min_periods=self.rolling_min_periods).std().fillna(0)
+        lag_df = grouped.shift(self.lag_step)
+
+        # إعادة ضبط الـ MultiIndex الناتج من الـ groupby rolling ليتوافق مع الـ DataFrame الأساسية
+        if isinstance(roll_mean_df.index, pd.MultiIndex):
+            roll_mean_df = roll_mean_df.reset_index(level=0, drop=True)
+        if isinstance(roll_std_df.index, pd.MultiIndex):
+            roll_std_df = roll_std_df.reset_index(level=0, drop=True)
+        if isinstance(lag_df.index, pd.MultiIndex):
+            lag_df = lag_df.reset_index(level=0, drop=True)
+
+        # تخصيص الأسماء الجديدة بدقة مطابقة تماماً للمطلوب
         for col in sensor_cols:
-            df[f'{col}_roll_mean'] = df.groupby('unit_number')[col].transform(
-                lambda x: x.rolling(self.rolling_window, min_periods=self.rolling_min_periods).mean()
-            )
-            df[f'{col}_roll_std'] = df.groupby('unit_number')[col].transform(
-                lambda x: x.rolling(self.rolling_window, min_periods=self.rolling_min_periods).std()
-            ).fillna(0)
+            df[f'{col}_roll_mean'] = roll_mean_df[col]
+            df[f'{col}_roll_std'] = roll_std_df[col]
             
             lag_col_name = f'{col}_lag_{self.lag_step}'
-            df[lag_col_name] = df.groupby('unit_number')[col].shift(self.lag_step)
-            df[lag_col_name] = df.groupby('unit_number')[lag_col_name].bfill()
+            df[lag_col_name] = lag_df[col]
+            
+        # تنفيذ الـ bfill للـ lag لكل وحدة على حدة بسرعة عالية
+        lag_cols_to_fill = [f'{col}_lag_{self.lag_step}' for col in sensor_cols]
+        df[lag_cols_to_fill] = df.groupby('unit_number')[lag_cols_to_fill].bfill()
             
         return df
 
@@ -108,11 +126,11 @@ class DataTransformation:
             train_df[feature_cols] = scaler.fit_transform(train_df[feature_cols])
             test_df[feature_cols] = scaler.transform(test_df[feature_cols])
             
-            # 5. تحويل الـ Scaler إلى ONNX وحفظه
+            # 5. تحويل الـ Scaler إلى ONNX وحفظه (مع تثبيت target_opsset=17)
             os.makedirs(os.path.dirname(self.transformation_config.scaler_path), exist_ok=True)
             
             initial_type = [('float_input', FloatTensorType([None, len(feature_cols)]))]
-            onnx_scaler = convert_sklearn(scaler, initial_types=initial_type)
+            onnx_scaler = convert_sklearn(scaler, initial_types=initial_type, target_opset=17)
             
             with open(self.transformation_config.scaler_path, "wb") as f:
                 f.write(onnx_scaler.SerializeToString())
@@ -120,7 +138,7 @@ class DataTransformation:
             logger.info(f"Saved ONNX Scaler successfully to {self.transformation_config.scaler_path}")
 
             os.makedirs(os.path.dirname(self.transformation_config.transformed_train_path), exist_ok=True)
-            train_df.to_csv(self.transformation_config.transformed_train_path, index=False)
+            train_df.to_csv(self.transformed_train_path if hasattr(self.transformation_config, 'transformed_train_path') else self.transformation_config.transformed_train_path, index=False)
             test_df.to_csv(self.transformation_config.transformed_test_path, index=False)
             
             logger.info("Data Transformation and Feature Engineering completed successfully.")

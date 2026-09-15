@@ -46,3 +46,15 @@ __pycache__/
 data/
 reports/
 .pytest_cache/
+
+
+logs/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.git
+.dvc/
+.env
+venv/
+.venv/

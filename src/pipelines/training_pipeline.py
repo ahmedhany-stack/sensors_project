@@ -3,6 +3,9 @@ import sys
 import yaml
 import onnx
 from onnx import compose
+import mlflow
+import mlflow.onnx
+from mlflow.tracking import MlflowClient
 
 from src.utils.logger import logger
 from src.utils.exception import CustomException
@@ -23,16 +26,24 @@ def load_config(config_path: str = "configs/config.yaml") -> dict:
 class TrainingPipeline:
     def __init__(self, config_path: str = "configs/config.yaml"):
         self.config = load_config(config_path)
+        
+        # استخراج إعدادات MLflow
+        trainer_cfg = self.config.get("model_trainer", {})
+        mlflow_cfg = trainer_cfg.get("mlflow", {})
+        self.tracking_uri = mlflow_cfg.get("tracking_uri", "http://127.0.0.1:5000")
+        self.experiment_name = mlflow_cfg.get("experiment_name", "RUL_Prediction")
 
     def export_combined_onnx_pipeline(
         self, 
         scaler_onnx_path: str = "models/scaler.onnx", 
         model_onnx_path: str = "models/xgb_rul_model.onnx", 
-        output_onnx_path: str = "models/full_rul_pipeline.onnx"
+        output_onnx_path: str = "models/full_rul_pipeline.onnx",
+        registered_model_name: str = "RUL_XGBoost_Model",
+        alias: str = "Production"
     ):
         """
         دمج ملف الـ Scaler وملف الـ XGBoost باستخدام compose.add_prefix
-        لتفادي تعارض الأسماء و اختلاف الـ IR Versions.
+        لتفادي تعارض الأسماء، ضبط الـ IR Version بما يتوافق مع Triton Server، وتسجيل الموديل المدمج في MLflow Model Registry.
         """
         try:
             logger.info("Starting ONNX Graph merging directly from .onnx files...")
@@ -41,8 +52,8 @@ class TrainingPipeline:
             scaler_model = onnx.load(scaler_onnx_path)
             regressor_model = onnx.load(model_onnx_path)
 
-            # 2. توحيد الـ IR Version
-            target_ir_version = max(scaler_model.ir_version, regressor_model.ir_version)
+            # 2. توحيد وضبط الـ IR Version بحيث لا يتجاوز 9 ليكون متوافقاً مع Triton Server
+            target_ir_version = min(max(scaler_model.ir_version, regressor_model.ir_version), 9)
             scaler_model.ir_version = target_ir_version
             regressor_model.ir_version = target_ir_version
 
@@ -62,15 +73,45 @@ class TrainingPipeline:
                 io_map=[(scaler_output_name, model_input_name)]
             )
 
-            # 6. حفظ ملف الـ ONNX المدمج النهائي
+            # 6. حفظ ملف الـ ONNX المدمج النهائي محلياً
             os.makedirs(os.path.dirname(output_onnx_path), exist_ok=True)
             onnx.save(combined_onnx, output_onnx_path)
-
             logger.info(f"Combined Scaler + Model ONNX saved successfully to: {output_onnx_path}")
+
+            # -------------------------------------------------------------
+            # 7. MLOps Best Practice: تسجيل الموديل المدمج في MLflow Model Registry
+            # -------------------------------------------------------------
+            logger.info("Registering Combined ONNX Pipeline into MLflow Model Registry...")
+            mlflow.set_tracking_uri(self.tracking_uri)
+            mlflow.set_experiment(self.experiment_name)
+
+            with mlflow.start_run(run_name="Full_Pipeline_ONNX_Registration"):
+                # تسجيل الموديل في الـ Artifacts وإضافته للـ Model Registry
+                model_info = mlflow.onnx.log_model(
+                    onnx_model=combined_onnx,
+                    artifact_path="full_onnx_pipeline",
+                    registered_model_name=registered_model_name
+                )
+
+            # تعيين الـ Alias المطلوبة (Production) على أحدث إصدار مسجل
+            client = MlflowClient(tracking_uri=self.tracking_uri)
+            latest_version = model_info.registered_model_version
+
+            client.set_registered_model_alias(
+                name=registered_model_name,
+                alias=alias,
+                version=latest_version
+            )
+
+            logger.info(
+                f"Successfully registered model '{registered_model_name}' "
+                f"(Version: {latest_version}) with Alias '{alias}' in MLflow Registry!"
+            )
+
             return output_onnx_path
 
         except Exception as e:
-            logger.error("Failed to export combined ONNX pipeline.")
+            logger.error("Failed to export and register combined ONNX pipeline.")
             raise CustomException(e, sys)
 
     def run_pipeline(self):
@@ -106,11 +147,13 @@ class TrainingPipeline:
             model_onnx_path = trainer.initiate_model_trainer(transformed_train_path)
             logger.info(f"Model Training Finished. Saved Model Path: {model_onnx_path}")
 
-            # Step 4.5: Direct ONNX Graph Merge (مع إضافة Prefix)
+            # Step 4.5: Direct ONNX Graph Merge + MLflow Registration
             combined_onnx_path = self.export_combined_onnx_pipeline(
                 scaler_onnx_path="models/scaler.onnx",
                 model_onnx_path="models/xgb_rul_model.onnx",
-                output_onnx_path="models/full_rul_pipeline.onnx"
+                output_onnx_path="models/full_rul_pipeline.onnx",
+                registered_model_name="RUL_XGBoost_Model",
+                alias="Production"
             )
 
             # Step 5: Model Evaluation

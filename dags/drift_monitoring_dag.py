@@ -31,6 +31,10 @@ logger = logging.getLogger("airflow.task")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+# إعدادات الـ Hot-Reload الخاص بـ FastAPI
+FASTAPI_RELOAD_URL = os.getenv("FASTAPI_RELOAD_URL", "http://api:8000/admin/reload-model")
+INTERNAL_API_SECRET = os.getenv("INTERNAL_API_SECRET", "super-secret-key")
+
 # نتأكد إنهم موجودين فعلاً وإلا نوقف الكود
 if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
     raise ValueError("❌ Telegram credentials are missing from environment variables!")
@@ -57,6 +61,22 @@ def send_telegram_alert(message: str):
     except Exception as e:
         logger.error(f"Error sending telegram alert: {e}")
 
+def notify_fastapi_hot_reload() -> bool:
+    """⚡ دالة إشعارات FastAPI بعمل Hot-Reload للموديل الجديد في الـ Memory فورا"""
+    logger.info("Notifying FastAPI to hot-reload the newly retrained model...")
+    headers = {"X-API-Key": INTERNAL_API_SECRET}
+    try:
+        response = requests.post(FASTAPI_RELOAD_URL, headers=headers, timeout=15)
+        if response.status_code == 200:
+            logger.info("✅ FastAPI model hot-reload triggered successfully!")
+            return True
+        else:
+            logger.error(f"❌ Failed to trigger FastAPI hot-reload. Status Code: {response.status_code}, Response: {response.text}")
+            return False
+    except Exception as e:
+        logger.error(f"❌ Exception occurred while calling FastAPI reload endpoint: {e}")
+        return False
+
 # إعدادات الـ DAG الافتراضية
 default_args = {
     "owner": "mlops_engine",
@@ -71,10 +91,6 @@ def generate_and_check_drift():
     """دالة لسحب البيانات، فحص الـ Drift، وإعادة التدريب تلقائياً مع إرسال تنبيهات تليجرام"""
     logger.info("Starting Evidently Data Drift Monitoring & CT Task...")
     
-    # ⚡ تم توجيه الرابط لقاعدة بيانات المشروع rul_db حيث يتواجد جدول prediction_logs فعلاً
-    # (عدل اليوزر والباسورد لـ airflow:airflow لو دي البيانات اللي واخدها الـ container عندك)
-    # استخدم بيانات الدخول الخاصة بـ docker-compose (يوزر والباسورد: airflow) ومع قاعدة بيانات rul_db
-# استخدم بيانات الدخول الخاصة بـ docker-compose (يوزر والباسورد: airflow) ومع قاعدة بيانات rul_db
     db_url = "postgresql+psycopg2://airflow:airflow@postgres:5432/rul_db"    
     try:
         logger.info("Connecting to PostgreSQL database to fetch prediction logs...")
@@ -146,11 +162,17 @@ def generate_and_check_drift():
             
             logger.info("Model retraining pipeline completed successfully after detecting drift!")
             
-            # إرسال تنبيه نجاح الريترينينج على تليجرام
+            # ⚡ 4. إشعارات FastAPI بعمل Hot-Reload فوري للموديل الجديد
+            reloaded_successfully = notify_fastapi_hot_reload()
+            
+            reload_status_str = "✅ Model Hot-Reloaded in FastAPI!" if reloaded_successfully else "⚠️ Hot-Reload Failed"
+
+            # إرسال تنبيه نجاح الريترينينج مع حالة الـ Deployment على تليجرام
             alert_msg = (
                 "🚨 *Alert: Data Drift Detected & Retrained!*\n\n"
                 "📊 Evidently detected a significant dataset drift in the last 24 hours.\n"
-                "🔄 Automatic model retraining pipeline (`TrainingPipeline`) has been executed successfully."
+                "🔄 Automatic model retraining pipeline (`TrainingPipeline`) has been executed successfully.\n"
+                f"🚀 *Deployment Status:* {reload_status_str}"
             )
             send_telegram_alert(alert_msg)
             
@@ -170,7 +192,7 @@ def generate_and_check_drift():
 with DAG(
     "rul_data_drift_monitoring",
     default_args=default_args,
-    description="Automated Data Drift monitoring with conditional model retraining and secure telegram alerts",
+    description="Automated Data Drift monitoring with conditional model retraining, zero-downtime hot-reload, and secure telegram alerts",
     schedule_interval="@daily",
     catchup=False,
 ) as dag:

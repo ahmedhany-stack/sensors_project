@@ -29,3 +29,7 @@ python-jose[cryptography]
 python-multipart
 passlib[bcrypt]
 bcrypt==4.0.1
+
+tritonclient[all]
+grpcio>=1.67.0
+skl2onnx
